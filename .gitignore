@@ -1,0 +1,17 @@
+# Environment variables — never commit credentials
+.env
+.env.local
+.env.*.local
+
+# Claude Code internal files
+skills.md
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.venv-*/
+
+# Node
+node_modules/
+.next/
