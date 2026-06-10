@@ -78,6 +78,7 @@ async def score_batch(req: _BatchScoreRequest, request: Request) -> dict[str, An
 @router.get("/")
 @limiter.limit("60/minute")
 async def get_sentiment_summary(
+    request: Request,
     scope: str = Query(
         default="global",
         description="Scope: global | type:<rss|sec|fda> | source:<name> | kw:<keyword>",
@@ -106,7 +107,8 @@ async def get_sentiment_summary(
 
 
 @router.get("/topics")
-async def get_topic_sentiment() -> dict[str, Any]:
+@limiter.limit("30/minute")
+async def get_topic_sentiment(request: Request) -> dict[str, Any]:
     """
     Return per-topic sentiment breakdown for the current recency window.
 
