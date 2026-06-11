@@ -1,11 +1,12 @@
 "use client";
 
-import { FilterState, SentimentLabel, SourceType } from "@/types/news";
+import { FilterState, SentimentLabel, SortBy, SourceType } from "@/types/news";
 import { ALL_TOPICS, ALL_SOURCE_TYPES, ALL_SENTIMENTS } from "@/lib/mockData";
 
 interface FilterSidebarProps {
   filters: FilterState;
   onChange: (f: FilterState) => void;
+  tickerCounts: Map<string, number>;
 }
 
 const TOPIC_COLORS: Record<string, string> = {
@@ -31,6 +32,12 @@ const SENTIMENT_CONFIG: Record<SentimentLabel, { icon: string; cls: string }> = 
   bearish: { icon: "▼", cls: "text-red-400" },
   neutral: { icon: "◆", cls: "text-slate-400" },
 };
+
+const SORT_OPTIONS: { value: SortBy; label: string }[] = [
+  { value: "latest",     label: "Latest first"  },
+  { value: "score_desc", label: "▲ Most bullish" },
+  { value: "score_asc",  label: "▼ Most bearish" },
+];
 
 function toggle<T>(set: Set<T>, value: T): Set<T> {
   const next = new Set(set);
@@ -71,7 +78,10 @@ function FilterRow({
   );
 }
 
-export default function FilterSidebar({ filters, onChange }: FilterSidebarProps) {
+export default function FilterSidebar({ filters, onChange, tickerCounts }: FilterSidebarProps) {
+  const sortedTickers = Array.from(tickerCounts.entries()).sort(
+    (a, b) => b[1] - a[1] || a[0].localeCompare(b[0])
+  );
   return (
     <aside className="w-52 shrink-0 bg-[#0a0e1a] border-r border-[#1e2d4a] overflow-y-auto scrollbar-thin py-4 px-3">
       {/* Search */}
@@ -84,6 +94,23 @@ export default function FilterSidebar({ filters, onChange }: FilterSidebarProps)
           className="w-full bg-[#0f1629] border border-[#1e2d4a] rounded px-2.5 py-1.5 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-[#00d4aa] transition-colors"
         />
       </div>
+
+      <Section label="Sort By">
+        {SORT_OPTIONS.map(({ value, label }) => (
+          <label key={value} className="flex items-center gap-2 cursor-pointer group">
+            <input
+              type="radio"
+              name="sortBy"
+              checked={filters.sortBy === value}
+              onChange={() => onChange({ ...filters, sortBy: value })}
+              className="accent-[#00d4aa] w-3 h-3 shrink-0"
+            />
+            <span className="text-xs group-hover:text-slate-200 transition-colors">
+              {label}
+            </span>
+          </label>
+        ))}
+      </Section>
 
       <Section label="Topics">
         {ALL_TOPICS.map((topic) => (
@@ -113,21 +140,59 @@ export default function FilterSidebar({ filters, onChange }: FilterSidebarProps)
         {ALL_SENTIMENTS.map((s) => {
           const { icon, cls } = SENTIMENT_CONFIG[s];
           return (
+            <div key={s} className="flex items-center justify-between">
+              <FilterRow
+                checked={filters.sentiments.has(s)}
+                onChange={() =>
+                  onChange({ ...filters, sentiments: toggle(filters.sentiments, s) })
+                }
+                label={
+                  <span className={`flex items-center gap-1 ${cls}`}>
+                    <span className="text-[10px]">{icon}</span>
+                    <span className="capitalize">{s}</span>
+                  </span>
+                }
+              />
+              <button
+                onClick={() => onChange({ ...filters, sentiments: new Set([s]) })}
+                title={`Show only ${s}`}
+                className="text-[9px] text-slate-600 hover:text-slate-400 transition-colors px-1 shrink-0"
+              >
+                only
+              </button>
+            </div>
+          );
+        })}
+      </Section>
+
+      <Section label="Tickers">
+        {sortedTickers.length === 0 ? (
+          <p className="text-[10px] text-slate-600 italic">No tickers detected</p>
+        ) : (
+          sortedTickers.map(([ticker, count]) => (
             <FilterRow
-              key={s}
-              checked={filters.sentiments.has(s)}
+              key={ticker}
+              checked={filters.tickers.has(ticker)}
               onChange={() =>
-                onChange({ ...filters, sentiments: toggle(filters.sentiments, s) })
+                onChange({ ...filters, tickers: toggle(filters.tickers, ticker) })
               }
               label={
-                <span className={`flex items-center gap-1 ${cls}`}>
-                  <span className="text-[10px]">{icon}</span>
-                  <span className="capitalize">{s}</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="font-mono text-sky-400 text-[10px]">{ticker}</span>
+                  <span className="text-slate-600 text-[10px]">({count})</span>
                 </span>
               }
             />
-          );
-        })}
+          ))
+        )}
+        {filters.tickers.size > 0 && (
+          <button
+            onClick={() => onChange({ ...filters, tickers: new Set() })}
+            className="text-[10px] text-slate-600 hover:text-[#00d4aa] transition-colors pt-1"
+          >
+            Clear ticker filter
+          </button>
+        )}
       </Section>
 
       <button
@@ -136,7 +201,9 @@ export default function FilterSidebar({ filters, onChange }: FilterSidebarProps)
             topics: new Set(ALL_TOPICS),
             sourceTypes: new Set(ALL_SOURCE_TYPES),
             sentiments: new Set(ALL_SENTIMENTS),
+            tickers: new Set(),
             search: "",
+            sortBy: "latest",
           })
         }
         className="w-full text-[11px] text-slate-600 hover:text-[#00d4aa] transition-colors py-1"
