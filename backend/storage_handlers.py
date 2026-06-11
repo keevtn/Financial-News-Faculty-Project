@@ -42,7 +42,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from IngestionModule import NewsItem
-from sentiment import SentimentAnalyzer, LoughranMcDonaldAnalyzer
+from sentiment import SentimentAnalyzer, FinBERTAnalyzer
 
 log = logging.getLogger("ingestion_agent.storage")
 
@@ -90,11 +90,13 @@ class MongoHandler:
         db_name: str = "financial_news",
         collection_name: str = "news_items",
         enabled: bool = True,
+        analyzer: Optional[SentimentAnalyzer] = None,
     ) -> None:
         self._uri = uri
         self._db_name = db_name
         self._collection_name = collection_name
         self.enabled = enabled
+        self._analyzer = analyzer
         self._client: Optional[Any] = None
         self._collection: Optional[Any] = None
 
@@ -140,6 +142,14 @@ class MongoHandler:
             await self._connect()
 
         doc = self._to_document(item)
+        if self._analyzer is not None:
+            result = await asyncio.to_thread(self._analyzer.analyze, item)
+            doc["sentiment"] = {
+                "score": round(result.score, 4),
+                "label": result.label,
+                "confidence": round(result.confidence, 4),
+            }
+
         try:
             # $setOnInsert => first write wins; re-seen items are left untouched.
             await self._collection.update_one(
@@ -374,13 +384,13 @@ def attach_storage(
     handlers: dict[str, Any] = {}
 
     if enable_mongo:
-        h = MongoHandler(**(mongo_kwargs or {}))
+        h = MongoHandler(analyzer=analyzer, **(mongo_kwargs or {}))
         agent.dispatcher.register(h)
         handlers["mongo"] = h
 
     if enable_redis:
         if analyzer is None:
-            analyzer = LoughranMcDonaldAnalyzer()
+            analyzer = FinBERTAnalyzer()
         h = RedisHandler(analyzer=analyzer, **(redis_kwargs or {}))
         agent.dispatcher.register(h)
         handlers["redis"] = h
