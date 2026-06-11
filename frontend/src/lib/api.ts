@@ -4,9 +4,10 @@ import { MOCK_NEWS } from "./mockData";
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK !== "false";
 
-export async function fetchNews(): Promise<NewsItem[]> {
+export async function fetchNews(limit: number | null = 100): Promise<NewsItem[]> {
   try {
-    const res = await fetch(`${API_BASE}/api/news`);
+    const url = limit !== null ? `${API_BASE}/api/news?limit=${limit}` : `${API_BASE}/api/news`;
+    const res = await fetch(url);
     if (!res.ok) return MOCK_NEWS;
     const data = await res.json();
     // Fall back to mock data if MongoDB has no items yet

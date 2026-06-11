@@ -27,6 +27,7 @@ def _doc_to_item(doc: dict) -> dict[str, Any]:
         "topic": doc.get("topic") or "General",
         "tickers": doc.get("tickers") or [],
         "extra": doc.get("extra") or {},
+        "sentiment": doc.get("sentiment") or None,
     }
 
 
@@ -34,7 +35,7 @@ def _doc_to_item(doc: dict) -> dict[str, Any]:
 @limiter.limit("60/minute")
 async def list_news(
     request: Request,
-    limit: int = Query(default=50, ge=1, le=500, description="Max items to return"),
+    limit: int = Query(default=100, ge=1, le=500, description="Max items to return"),
     offset: int = Query(default=0, ge=0, description="Pagination offset"),
     source_type: Optional[str] = Query(default=None, description="Filter: rss | sec | fda"),
     topic: Optional[str] = Query(default=None, description="Filter by topic label"),
