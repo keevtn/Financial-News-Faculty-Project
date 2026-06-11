@@ -54,13 +54,13 @@ log = logging.getLogger("ingestion_agent.storage")
 
 try:
     from motor.motor_asyncio import AsyncIOMotorClient
-except ImportError:                                   # Needed Implementation:
-    AsyncIOMotorClient = None                         #   pip install motor
+except ImportError:
+    AsyncIOMotorClient = None
 
 try:
     import redis.asyncio as aioredis
-except ImportError:                                   # Needed Implementation:
-    aioredis = None                                   #   pip install "redis>=4.2"
+except ImportError:
+    aioredis = None
 
 # ---------------------------------------------------------------------------
 # MongoDB — durable, queryable archive of everything ingested
@@ -86,10 +86,10 @@ class MongoHandler:
 
     def __init__(
         self,
-        uri: str = "mongodb://localhost:27017",   # Needed Implementation:
-        db_name: str = "financial_news",          #   replace with your real
-        collection_name: str = "news_items",      #   host/credentials/TLS, e.g.
-        enabled: bool = True,                      #   mongodb+srv://user:pass@cluster/?tls=true
+        uri: str = "mongodb://localhost:27017",
+        db_name: str = "financial_news",
+        collection_name: str = "news_items",
+        enabled: bool = True,
     ) -> None:
         self._uri = uri
         self._db_name = db_name
@@ -100,8 +100,7 @@ class MongoHandler:
 
     async def _connect(self) -> None:
         if AsyncIOMotorClient is None:
-            # Needed Implementation: install motor (`pip install motor`).
-            raise RuntimeError("motor is not installed; cannot use MongoHandler")
+            raise RuntimeError("motor is not installed; run: pip install motor")
         # tz_aware so datetimes round-trip as UTC-aware on read.
         self._client = AsyncIOMotorClient(self._uri, tz_aware=True)
         db = self._client[self._db_name]
@@ -129,6 +128,7 @@ class MongoHandler:
             "description": item.description,
             "url": item.url,
             "topic": item.topic,
+            "tickers": list(item.tickers),
             "extra": item.extra,
             "ingested_at": datetime.now(tz=timezone.utc),
         }
@@ -203,9 +203,9 @@ class RedisHandler:
 
     def __init__(
         self,
-        url: str = "redis://localhost:6379/0",   # Needed Implementation:
-        analyzer: Optional[SentimentAnalyzer] = None,  #   real host/auth/TLS, e.g.
-        window_seconds: int = 3600,               #   rediss://:pass@host:6380/0
+        url: str = "redis://localhost:6379/0",
+        analyzer: Optional[SentimentAnalyzer] = None,
+        window_seconds: int = 3600,
         track_keywords: Optional[list[str]] = None,
         namespace: str = "sentiment",
         enabled: bool = True,
@@ -221,8 +221,7 @@ class RedisHandler:
 
     async def _connect(self) -> None:
         if aioredis is None:
-            # Needed Implementation: install redis (`pip install "redis>=4.2"`).
-            raise RuntimeError("redis is not installed; cannot use RedisHandler")
+            raise RuntimeError("redis is not installed; run: pip install 'redis>=4.2'")
         self._redis = aioredis.from_url(self._url, decode_responses=True)
         await self._redis.ping()
         # Mask any password in the URL before logging
@@ -361,9 +360,9 @@ def attach_storage(
     agent: Any,
     *,
     enable_mongo: bool = True,
-    enable_redis: bool = True,
-    analyzer: Optional[SentimentAnalyzer] = None,
     mongo_kwargs: Optional[dict[str, Any]] = None,
+    enable_redis: bool = False,
+    analyzer: Optional[SentimentAnalyzer] = None,
     redis_kwargs: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """
@@ -394,7 +393,8 @@ def attach_storage(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    from IngestionModule import IngestionAgent, FILTER_KEYWORDS
+    import os
+    from IngestionModule import IngestionAgent
 
     async def main() -> None:
         agent = IngestionAgent(rss_poll_interval=60)
@@ -402,21 +402,13 @@ if __name__ == "__main__":
         storage = attach_storage(
             agent,
             enable_mongo=True,
-            enable_redis=True,
-            # Track per-topic sentiment using the same keywords the agent filters on.
-            redis_kwargs={"track_keywords": FILTER_KEYWORDS, "window_seconds": 3600},
-            # mongo_kwargs={"uri": "mongodb+srv://..."},   # Needed Implementation
-            # redis_kwargs={"url": "rediss://:pass@host:6380/0", ...},  # Needed Implementation
+            mongo_kwargs={"uri": os.environ["MONGODB_URI"]},
         )
 
         await agent.start()
         try:
-            # Periodically print the current global mood as a demo of the read API.
             while True:
-                await asyncio.sleep(60)
-                if "redis" in storage:
-                    snapshot = await storage["redis"].recent_sentiment("global")
-                    log.info("Recent global sentiment: %s", snapshot)
+                await asyncio.sleep(3600)
         except (KeyboardInterrupt, asyncio.CancelledError):
             pass
         finally:

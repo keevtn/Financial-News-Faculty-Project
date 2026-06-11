@@ -51,6 +51,7 @@ async def main(
     fda_interval: float,
     analyzer_name: str | None,
     mongo_uri: str | None,
+    redis_url: str | None,
 ) -> None:
     analyzer = _build_analyzer(analyzer_name) if analyzer_name else None
 
@@ -68,11 +69,19 @@ async def main(
         agent.dispatcher.register(CSVHandler(csv_path, enabled=True))
 
     storage = {}
-    if mongo_uri:
+    if mongo_uri or redis_url:
+        from IngestionModule import FILTER_KEYWORDS
         storage = attach_storage(
             agent,
-            enable_mongo=True,
-            mongo_kwargs={"uri": mongo_uri},
+            enable_mongo=bool(mongo_uri),
+            mongo_kwargs={"uri": mongo_uri} if mongo_uri else None,
+            enable_redis=bool(redis_url),
+            analyzer=analyzer,
+            redis_kwargs={
+                "url": redis_url,
+                "track_keywords": FILTER_KEYWORDS,
+                "window_seconds": 3600,
+            } if redis_url else None,
         )
 
     await agent.start()
@@ -107,7 +116,14 @@ if __name__ == "__main__":
             "Omit to disable sentiment output."
         ),
     )
-    # --redis flag removed — Redis not yet integrated
+    p.add_argument(
+        "--redis", metavar="URL", nargs="?", const=os.environ.get("REDIS_URL"),
+        default=os.environ.get("REDIS_URL"),
+        help=(
+            "Store rolling sentiment in Redis. Reads REDIS_URL from .env by default. "
+            "Pass a URL explicitly to override."
+        ),
+    )
     p.add_argument(
         "--mongo", metavar="URI", nargs="?", const=os.environ.get("MONGODB_URI"),
         default=os.environ.get("MONGODB_URI"),
@@ -129,4 +145,5 @@ if __name__ == "__main__":
         args.rss_interval, args.sec_interval, args.fda_interval,
         args.sentiment,
         args.mongo,
+        args.redis,
     ))

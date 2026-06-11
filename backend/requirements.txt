@@ -11,5 +11,5 @@ vaderSentiment          # VaderSentimentAnalyzer  (lightweight fallback)
 # Storage backends
 motor                   # MongoHandler  (async MongoDB)
 pymongo[srv]            # required for mongodb+srv:// Atlas URIs
-# redis>=4.2            # RedisHandler  (async Redis) — uncomment if using Redis
+redis>=4.2              # RedisHandler  (async Redis)
 python-dotenv           # loads .env into os.environ at startup
