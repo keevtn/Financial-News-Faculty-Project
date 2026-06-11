@@ -50,7 +50,6 @@ async def main(
     sec_interval: float,
     fda_interval: float,
     analyzer_name: str | None,
-    redis_url: str | None,
     mongo_uri: str | None,
 ) -> None:
     analyzer = _build_analyzer(analyzer_name) if analyzer_name else None
@@ -69,22 +68,11 @@ async def main(
         agent.dispatcher.register(CSVHandler(csv_path, enabled=True))
 
     storage = {}
-    use_mongo = bool(mongo_uri)
-    use_redis = bool(redis_url)
-
-    if use_mongo or use_redis:
-        from IngestionModule import FILTER_KEYWORDS
+    if mongo_uri:
         storage = attach_storage(
             agent,
-            enable_mongo=use_mongo,
-            enable_redis=use_redis,
-            analyzer=analyzer,
-            mongo_kwargs={"uri": mongo_uri} if use_mongo else None,
-            redis_kwargs={
-                "url": redis_url,
-                "track_keywords": FILTER_KEYWORDS,
-                "window_seconds": 3600,
-            } if use_redis else None,
+            enable_mongo=True,
+            mongo_kwargs={"uri": mongo_uri},
         )
 
     await agent.start()
@@ -119,13 +107,7 @@ if __name__ == "__main__":
             "Omit to disable sentiment output."
         ),
     )
-    p.add_argument(
-        "--redis", metavar="URL", nargs="?", const="redis://localhost:6379/0",
-        help=(
-            "Store sentiment in Redis. Optionally pass a custom URL "
-            "(default: redis://localhost:6379/0)."
-        ),
-    )
+    # --redis flag removed — Redis not yet integrated
     p.add_argument(
         "--mongo", metavar="URI", nargs="?", const=os.environ.get("MONGODB_URI"),
         default=os.environ.get("MONGODB_URI"),
@@ -146,6 +128,5 @@ if __name__ == "__main__":
         args.csv,
         args.rss_interval, args.sec_interval, args.fda_interval,
         args.sentiment,
-        args.redis,
         args.mongo,
     ))

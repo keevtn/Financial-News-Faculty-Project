@@ -25,6 +25,7 @@ def _doc_to_item(doc: dict) -> dict[str, Any]:
         "description": doc.get("description", ""),
         "url": doc.get("url", ""),
         "topic": doc.get("topic") or "General",
+        "tickers": doc.get("tickers") or [],
         "extra": doc.get("extra") or {},
     }
 

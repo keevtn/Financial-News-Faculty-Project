@@ -1,5 +1,6 @@
 import { NewsItem } from "@/types/news";
 import SentimentBadge from "./SentimentBadge";
+import TickerBadge from "./TickerBadge";
 import TopicBadge from "./TopicBadge";
 import SourceBadge from "./SourceBadge";
 import { formatDistanceToNow } from "@/lib/time";
@@ -51,6 +52,15 @@ export default function NewsCard({ item, scoringPending }: NewsCardProps) {
         <h2 className="text-sm font-semibold text-slate-100 leading-snug line-clamp-3">
           {item.title}
         </h2>
+      )}
+
+      {/* tickers */}
+      {item.tickers && item.tickers.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {item.tickers.slice(0, 6).map((ticker) => (
+            <TickerBadge key={ticker} ticker={ticker} />
+          ))}
+        </div>
       )}
 
       {/* description */}

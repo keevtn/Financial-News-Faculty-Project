@@ -95,6 +95,7 @@ class NewsItem:
     url: str = ""
     extra: dict[str, Any] = field(default_factory=dict, hash=False, compare=False)
     topic: str = ""                      # assigned by TopicClassifier at dispatch time
+    tickers: tuple[str, ...] = field(default=(), hash=False, compare=False)
 
     # Stable identity hash for deduplication
     @property
@@ -863,6 +864,8 @@ class IngestionAgent:
         # Use FILTER_KEYWORDS by default; pass keywords=[] to disable filtering
         self._filter = KeywordFilter(keywords if keywords is not None else FILTER_KEYWORDS)
         self._classifier = TopicClassifier()
+        from ticker_extractor import TickerExtractor
+        self._ticker_extractor = TickerExtractor()
 
         self.enable_rss = enable_rss
         self.enable_sec = enable_sec
@@ -900,7 +903,11 @@ class IngestionAgent:
         while True:
             item = await self._queue.get()
             if self._filter.accepts(item):
-                item = replace(item, topic=self._classifier.classify(item))
+                item = replace(
+                    item,
+                    topic=self._classifier.classify(item),
+                    tickers=self._ticker_extractor.extract(item.title, item.description),
+                )
                 await self.dispatcher.dispatch(item)
             else:
                 log.debug("Filtered out: [%s] %s", item.source_type, item.title[:80])

@@ -29,6 +29,7 @@ export interface NewsItem {
   description: string;
   url: string;
   topic: string;         // comma-separated topic labels (TopicClassifier output)
+  tickers?: string[];    // stock tickers extracted from title + description
   extra?: Record<string, unknown>;
   sentiment?: SentimentResult;
 }
@@ -44,9 +45,13 @@ export interface SentimentSummary {
   window_seconds: number;
 }
 
+export type SortBy = "latest" | "score_desc" | "score_asc";
+
 export interface FilterState {
   topics: Set<string>;
   sourceTypes: Set<SourceType>;
   sentiments: Set<SentimentLabel>;
+  tickers: Set<string>;
   search: string;
+  sortBy: SortBy;
 }
