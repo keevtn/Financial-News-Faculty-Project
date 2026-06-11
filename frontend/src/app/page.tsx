@@ -16,6 +16,7 @@ const DEFAULT_FILTERS: FilterState = {
   tickers: new Set(),
   search: "",
   sortBy: "latest",
+  limit: 100,
 };
 
 export default function HomePage() {
@@ -23,26 +24,34 @@ export default function HomePage() {
   const [scoringPending, setScoringPending] = useState(true);
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
 
-  // On mount: fetch news from MongoDB (falls back to mock), then score with FinBERT.
+  // Fetch news from MongoDB (falls back to mock), then score unscored items with FinBERT.
+  // Re-runs when committed limit changes.
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
-      const fetched = await fetchNews();
+      const fetched = await fetchNews(filters.limit ?? 100);
       if (cancelled) return;
       setItems(fetched);
 
-      const scored = await scoreSentimentBatch(
-        fetched.map((i) => ({ id: i.id, title: i.title, description: i.description }))
-      );
-      if (cancelled) return;
-      if (Object.keys(scored).length > 0) {
-        setItems((prev) =>
-          prev.map((item) => ({
-            ...item,
-            sentiment: scored[item.id] ?? item.sentiment,
-          }))
-        );
+      const unscored = fetched.filter((i) => !i.sentiment);
+      if (unscored.length > 0) {
+        const CHUNK = 100;
+        for (let i = 0; i < unscored.length; i += CHUNK) {
+          const batch = unscored.slice(i, i + CHUNK);
+          const scored = await scoreSentimentBatch(
+            batch.map((it) => ({ id: it.id, title: it.title, description: it.description }))
+          );
+          if (cancelled) return;
+          if (Object.keys(scored).length > 0) {
+            setItems((prev) =>
+              prev.map((item) => ({
+                ...item,
+                sentiment: scored[item.id] ?? item.sentiment,
+              }))
+            );
+          }
+        }
       }
       setScoringPending(false);
     }
@@ -51,7 +60,7 @@ export default function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [filters.limit]);
 
   // All filters except tickers, plus sort — ticker counts are derived from this.
   const preTickerFiltered = useMemo(() => {
@@ -95,13 +104,16 @@ export default function HomePage() {
     return counts;
   }, [preTickerFiltered]);
 
-  // Apply ticker filter last so counts above stay accurate.
+  // Apply ticker filter then limit last so counts above stay accurate.
   const filtered = useMemo(() => {
-    if (filters.tickers.size === 0) return preTickerFiltered;
-    return preTickerFiltered.filter((item) =>
-      item.tickers?.some((t) => filters.tickers.has(t))
-    );
-  }, [preTickerFiltered, filters.tickers]);
+    let result = preTickerFiltered;
+    if (filters.tickers.size > 0) {
+      result = result.filter((item) =>
+        item.tickers?.some((t) => filters.tickers.has(t))
+      );
+    }
+    return filters.limit !== null ? result.slice(0, filters.limit) : result;
+  }, [preTickerFiltered, filters.tickers, filters.limit]);
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">

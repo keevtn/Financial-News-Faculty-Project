@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { FilterState, SentimentLabel, SortBy, SourceType } from "@/types/news";
 import { ALL_TOPICS, ALL_SOURCE_TYPES, ALL_SENTIMENTS } from "@/lib/mockData";
 
@@ -78,10 +79,39 @@ function FilterRow({
   );
 }
 
+const MAX_LIMIT = 500;
+
 export default function FilterSidebar({ filters, onChange, tickerCounts }: FilterSidebarProps) {
   const sortedTickers = Array.from(tickerCounts.entries()).sort(
     (a, b) => b[1] - a[1] || a[0].localeCompare(b[0])
   );
+
+  const [pendingLimit, setPendingLimit] = useState(String(filters.limit ?? 100));
+
+  // Sync input when filters are reset externally (e.g. "Reset all filters").
+  useEffect(() => {
+    setPendingLimit(String(filters.limit ?? 100));
+  }, [filters.limit]);
+
+  const parsedLimit = parseInt(pendingLimit, 10);
+  const limitWarning =
+    !isNaN(parsedLimit) && parsedLimit > MAX_LIMIT
+      ? `Maximum is ${MAX_LIMIT} — will fetch ${MAX_LIMIT}`
+      : !isNaN(parsedLimit) && parsedLimit < 1 && pendingLimit !== ""
+      ? "Must be at least 1"
+      : null;
+
+  function commitLimit() {
+    if (pendingLimit === "" || isNaN(parsedLimit)) {
+      onChange({ ...filters, limit: null });
+    } else if (parsedLimit < 1) {
+      // invalid — warning shown, do nothing
+    } else {
+      const clamped = Math.min(parsedLimit, MAX_LIMIT);
+      onChange({ ...filters, limit: clamped });
+      setPendingLimit(String(clamped));
+    }
+  }
   return (
     <aside className="w-52 shrink-0 bg-[#0a0e1a] border-r border-[#1e2d4a] overflow-y-auto scrollbar-thin py-4 px-3">
       {/* Search */}
@@ -93,6 +123,33 @@ export default function FilterSidebar({ filters, onChange, tickerCounts }: Filte
           onChange={(e) => onChange({ ...filters, search: e.target.value })}
           className="w-full bg-[#0f1629] border border-[#1e2d4a] rounded px-2.5 py-1.5 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-[#00d4aa] transition-colors"
         />
+      </div>
+
+      {/* Limit */}
+      <div className="mb-5">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-2">
+          Show recent
+        </p>
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            min={1}
+            placeholder="100"
+            value={pendingLimit}
+            onChange={(e) => setPendingLimit(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && commitLimit()}
+            className="w-full bg-[#0f1629] border border-[#1e2d4a] rounded px-2.5 py-1.5 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-[#00d4aa] transition-colors"
+          />
+          <button
+            onClick={commitLimit}
+            className="shrink-0 text-[10px] px-2 py-1.5 rounded bg-[#0f1629] border border-[#1e2d4a] text-[#00d4aa] hover:bg-[#00d4aa]/10 transition-colors"
+          >
+            Apply
+          </button>
+        </div>
+        {limitWarning && (
+          <p className="text-[10px] text-amber-400 mt-1">{limitWarning}</p>
+        )}
       </div>
 
       <Section label="Sort By">
@@ -204,6 +261,7 @@ export default function FilterSidebar({ filters, onChange, tickerCounts }: Filte
             tickers: new Set(),
             search: "",
             sortBy: "latest",
+            limit: 100,
           })
         }
         className="w-full text-[11px] text-slate-600 hover:text-[#00d4aa] transition-colors py-1"

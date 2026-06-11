@@ -54,4 +54,5 @@ export interface FilterState {
   tickers: Set<string>;
   search: string;
   sortBy: SortBy;
+  limit: number | null;
 }
