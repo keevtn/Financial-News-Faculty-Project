@@ -42,7 +42,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from IngestionModule import NewsItem
-from sentiment import SentimentAnalyzer, FinBERTAnalyzer
+from sentiment import SentimentAnalyzer, FinBERTAnalyzer, LoughranMcDonaldAnalyzer, SentimentResult
 
 log = logging.getLogger("ingestion_agent.storage")
 
@@ -99,6 +99,8 @@ class MongoHandler:
         self._analyzer = analyzer
         self._client: Optional[Any] = None
         self._collection: Optional[Any] = None
+        # Lazy-loaded fast analyzer for social items — avoids FinBERT latency
+        self._fast_analyzer: Optional[LoughranMcDonaldAnalyzer] = None
 
     async def _connect(self) -> None:
         if AsyncIOMotorClient is None:
@@ -135,6 +137,25 @@ class MongoHandler:
             "ingested_at": datetime.now(tz=timezone.utc),
         }
 
+    def _score_social(self, item: NewsItem) -> SentimentResult:
+        """
+        Fast-path sentiment for social items.
+
+        Priority:
+          1. StockTwits human label (already crowd-sourced; ~0 ms)
+          2. Loughran-McDonald keyword scorer (~1 ms, no GPU needed)
+
+        FinBERT is never used here — social ingestion must stay low-latency.
+        """
+        st = item.extra.get("st_sentiment")
+        if st == "Bullish":
+            return SentimentResult(score=0.5, label="bullish", confidence=0.8)
+        if st == "Bearish":
+            return SentimentResult(score=-0.5, label="bearish", confidence=0.8)
+        if self._fast_analyzer is None:
+            self._fast_analyzer = LoughranMcDonaldAnalyzer()
+        return self._fast_analyzer.analyze(item)
+
     async def __call__(self, item: NewsItem) -> None:
         if not self.enabled:
             return
@@ -142,7 +163,15 @@ class MongoHandler:
             await self._connect()
 
         doc = self._to_document(item)
-        if self._analyzer is not None:
+        if item.source_type == "social":
+            # Unstructured protocol: fast assumptions only, no blocking inference
+            result = self._score_social(item)
+            doc["sentiment"] = {
+                "score": round(result.score, 4),
+                "label": result.label,
+                "confidence": round(result.confidence, 4),
+            }
+        elif self._analyzer is not None:
             result = await asyncio.to_thread(self._analyzer.analyze, item)
             doc["sentiment"] = {
                 "score": round(result.score, 4),

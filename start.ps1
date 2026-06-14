@@ -1,18 +1,20 @@
 # start.ps1 — launch all three services in separate terminal windows
 #
 # Usage:
-#   .\start.ps1              # rss + sec + fda ingestion (default)
-#   .\start.ps1 --rss-only   # ingestion RSS only
-#   .\start.ps1 --no-ingest  # skip ingestion (middleware + frontend only)
+#   .\start.ps1              # structured only: rss + sec + fda (default)
+#   .\start.ps1 -Social      # structured + unstructured (StockTwits + Bluesky)
+#   .\start.ps1 -RssOnly     # structured RSS only
+#   .\start.ps1 -NoIngest    # skip ingestion (middleware + frontend only)
 
 param(
     [switch]$RssOnly,
-    [switch]$NoIngest
+    [switch]$NoIngest,
+    [switch]$Social
 )
 
 $root = $PSScriptRoot
 
-# --- 1. Middleware (FastAPI + FinBERT) ---
+# --- 1. Middleware (FastAPI) ---
 Start-Process powershell -ArgumentList "-NoExit", "-Command", @"
     Set-Location '$root'
     Write-Host '=== Middleware ===' -ForegroundColor Cyan
@@ -28,7 +30,16 @@ Start-Process powershell -ArgumentList "-NoExit", "-Command", @"
 
 # --- 3. Ingestion pipeline ---
 if (-not $NoIngest) {
-    $ingestArgs = if ($RssOnly) { "--rss" } else { "--rss --sec --fda" }
+    # Structured sources
+    $structuredArgs = if ($RssOnly) { "--rss" } else { "--rss --sec --fda" }
+
+    # Unstructured sources (opt-in via -Social flag)
+    # Social uses fast-path scoring — StockTwits human labels + LM keyword fallback.
+    # These run in the same process as structured sources via the shared dispatcher.
+    $socialArgs = if ($Social) { "--stocktwits --bluesky" } else { "" }
+
+    $ingestArgs = "$structuredArgs $socialArgs".Trim()
+
     Start-Process powershell -ArgumentList "-NoExit", "-Command", @"
         Set-Location '$root\backend'
         Write-Host '=== Ingestion ===' -ForegroundColor Yellow
@@ -38,8 +49,12 @@ if (-not $NoIngest) {
 
 Write-Host ""
 Write-Host "All services starting in separate windows." -ForegroundColor White
-Write-Host "  Middleware  -> http://localhost:8000/docs" -ForegroundColor Cyan
-Write-Host "  Frontend    -> http://localhost:3000" -ForegroundColor Green
+Write-Host "  Middleware -> http://localhost:8000/docs" -ForegroundColor Cyan
+Write-Host "  Frontend  -> http://localhost:3000" -ForegroundColor Green
 if (-not $NoIngest) {
-    Write-Host "  Ingestion   -> writing to MongoDB (financial_news.news_items)" -ForegroundColor Yellow
+    if ($Social) {
+        Write-Host "  Ingestion -> structured (RSS, SEC, FDA) + social (StockTwits, Bluesky)" -ForegroundColor Yellow
+    } else {
+        Write-Host "  Ingestion -> structured only (RSS, SEC, FDA)  |  add -Social to include social feeds" -ForegroundColor Yellow
+    }
 }

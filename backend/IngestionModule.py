@@ -55,10 +55,12 @@ import asyncio
 import calendar
 import csv
 import hashlib
+import html
 import itertools
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -330,6 +332,13 @@ def _parse_dt(raw: Any) -> datetime:
         return datetime.now(tz=timezone.utc)
 
 
+def _strip_html(text: str) -> str:
+    """Strip HTML tags and decode HTML entities. Used to clean Reddit RSS descriptions."""
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = html.unescape(text)
+    return " ".join(text.split())
+
+
 # ---------------------------------------------------------------------------
 # Stage 1 — RSS Extractor
 # ---------------------------------------------------------------------------
@@ -397,6 +406,105 @@ DEFAULT_RSS_FEEDS: list[dict[str, str]] = [
         "label": "Benzinga",
         "url": "https://www.benzinga.com/feed",
     },
+    # ── Reddit social feeds (unauthenticated public RSS, /new for recency) ──
+    # source_type="social" routes these to the Unstructured tab in the frontend.
+    {
+        "label": "Reddit - WallStreetBets",
+        "url": "https://www.reddit.com/r/wallstreetbets/new/.rss",
+        "source_type": "social",
+    },
+    {
+        "label": "Reddit - Investing",
+        "url": "https://www.reddit.com/r/investing/new/.rss",
+        "source_type": "social",
+    },
+    {
+        "label": "Reddit - Stocks",
+        "url": "https://www.reddit.com/r/stocks/new/.rss",
+        "source_type": "social",
+    },
+    {
+        "label": "Reddit - SecurityAnalysis",
+        "url": "https://www.reddit.com/r/SecurityAnalysis/new/.rss",
+        "source_type": "social",
+    },
+    {
+        "label": "Reddit - Economics",
+        "url": "https://www.reddit.com/r/economics/new/.rss",
+        "source_type": "social",
+    },
+    {
+        "label": "Reddit - EconMonitor",
+        "url": "https://www.reddit.com/r/econmonitor/new/.rss",
+        "source_type": "social",
+    },
+    {
+        "label": "Reddit - StockMarket",
+        "url": "https://www.reddit.com/r/StockMarket/new/.rss",
+        "source_type": "social",
+    },
+    {
+        "label": "Reddit - Options",
+        "url": "https://www.reddit.com/r/options/new/.rss",
+        "source_type": "social",
+    },
+    {
+        "label": "Reddit - AlgoTrading",
+        "url": "https://www.reddit.com/r/algotrading/new/.rss",
+        "source_type": "social",
+    },
+    {
+        "label": "Reddit - CryptoCurrency",
+        "url": "https://www.reddit.com/r/CryptoCurrency/new/.rss",
+        "source_type": "social",
+    },
+    {
+        "label": "Reddit - Bitcoin",
+        "url": "https://www.reddit.com/r/Bitcoin/new/.rss",
+        "source_type": "social",
+    },
+]
+
+# ---------------------------------------------------------------------------
+# Unstructured source feed configs (used by future UnstructuredModule.py)
+# ---------------------------------------------------------------------------
+
+#: StockTwits ticker watchlist — polled via public symbol stream endpoint.
+#: Crypto uses the .X suffix convention StockTwits requires.
+STOCKTWITS_WATCHLIST: list[str] = [
+    # Broad market ETFs
+    "SPY", "QQQ", "DIA",
+    # Mega-cap equities
+    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA",
+    # Financials
+    "JPM", "BAC",
+    # Energy
+    "XOM", "CVX",
+    # Technology / semiconductors
+    "AMD", "INTC",
+    # Bonds / macro proxies
+    "TLT", "GLD",
+    # Crypto
+    "BTC.X", "ETH.X",
+    # High-sentiment / retail-watched
+    "GME", "AMC", "PLTR",
+]
+
+#: Bluesky keyword/hashtag search terms — queried via public AT Protocol API.
+BLUESKY_SEARCH_TERMS: list[str] = [
+    # Equities & general market
+    "#stocks", "#investing", "#stockmarket", "#wallstreetbets", "#earnings",
+    "#trading", "#options", "#ipo", "#merger",
+    # Macro
+    "#economy", "#inflation", "#federalreserve", "#gdp", "#cpi",
+    # Crypto
+    "#crypto", "#bitcoin", "#ethereum", "#defi",
+    # Commodities / energy
+    "#gold", "#oil", "#commodities",
+    # Bonds
+    "#bonds", "#treasury",
+    # Tech / sector
+    "#fintech", "#semiconductor", "#ai",
 ]
 
 
@@ -417,6 +525,7 @@ class RSSExtractor:
         queue: asyncio.Queue | None = None,
         seen_cache: _SeenCache | None = None,
         max_age_minutes: float | None = None,
+        social_feed_delay: float = 2.0,
     ) -> None:
         self.feeds = feeds or DEFAULT_RSS_FEEDS
         self.poll_interval = poll_interval
@@ -424,6 +533,8 @@ class RSSExtractor:
         self._seen = seen_cache or _SeenCache()
         # Drop items published more than this many minutes ago; None = no limit
         self.max_age_minutes = max_age_minutes
+        # Seconds to wait between sequential social-feed requests (avoids Reddit 429s)
+        self.social_feed_delay = social_feed_delay
         self._running = False
 
     # ------------------------------------------------------------------ #
@@ -459,10 +570,13 @@ class RSSExtractor:
                 )
                 published_at = _parse_dt(pub_raw)
                 description = self._extract_description(entry)
+                if feed_cfg.get("source_type") == "social":
+                    description = _strip_html(description)
 
+                # feed_cfg may override source_type (e.g. Reddit feeds use "social")
                 item = NewsItem(
                     source=label,
-                    source_type="rss",
+                    source_type=feed_cfg.get("source_type", "rss"),
                     title=title,
                     published_at=published_at,
                     description=description,
@@ -485,19 +599,38 @@ class RSSExtractor:
     async def run(self) -> None:
         """Run forever, polling all feeds every ``poll_interval`` seconds."""
         self._running = True
-        log.info("RSSExtractor started — %d feeds, interval=%ss",
-                 len(self.feeds), self.poll_interval)
+        standard = [f for f in self.feeds if f.get("source_type", "rss") != "social"]
+        social = [f for f in self.feeds if f.get("source_type") == "social"]
+        log.info(
+            "RSSExtractor started — %d standard + %d social feeds, interval=%ss",
+            len(standard), len(social), self.poll_interval,
+        )
         async with _HttpClient() as http:
             while self._running:
                 start = asyncio.get_running_loop().time()
-                tasks = [self._poll_feed(f, http) for f in self.feeds]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
                 total = 0
-                for batch in results:
-                    if isinstance(batch, list):
-                        for item in batch:
-                            await self.queue.put(item)
-                            total += 1
+
+                # Standard RSS: fire all concurrently (newswires tolerate it)
+                if standard:
+                    results = await asyncio.gather(
+                        *[self._poll_feed(f, http) for f in standard],
+                        return_exceptions=True,
+                    )
+                    for batch in results:
+                        if isinstance(batch, list):
+                            for item in batch:
+                                await self.queue.put(item)
+                                total += 1
+
+                # Social RSS (Reddit etc.): sequential + delay to avoid burst 429s
+                for feed in social:
+                    if not self._running:
+                        break
+                    for item in await self._poll_feed(feed, http):
+                        await self.queue.put(item)
+                        total += 1
+                    await asyncio.sleep(self.social_feed_delay)
+
                 log.info("RSSExtractor — cycle complete, %d new items", total)
                 elapsed = asyncio.get_running_loop().time() - start
                 await asyncio.sleep(max(0.0, self.poll_interval - elapsed))

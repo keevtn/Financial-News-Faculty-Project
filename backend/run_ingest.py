@@ -11,6 +11,7 @@ except ImportError:
     pass
 
 from IngestionModule import CSVHandler, IngestionAgent, NewsItem
+from UnstructuredModule import UnstructuredAgent
 from storage_handlers import attach_storage
 
 
@@ -45,6 +46,8 @@ async def main(
     enable_rss: bool,
     enable_sec: bool,
     enable_fda: bool,
+    enable_stocktwits: bool,
+    enable_bluesky: bool,
     csv_path: str | None,
     rss_interval: float,
     sec_interval: float,
@@ -55,6 +58,7 @@ async def main(
 ) -> None:
     analyzer = _build_analyzer(analyzer_name) if analyzer_name else None
 
+    # --- Structured ingestion (RSS newswires, SEC, FDA) ---
     agent = IngestionAgent(
         rss_poll_interval=rss_interval,
         sec_poll_interval=sec_interval,
@@ -84,12 +88,26 @@ async def main(
             } if redis_url else None,
         )
 
+    # --- Unstructured ingestion (StockTwits, Bluesky) ---
+    # Shares the same DispatchRouter so social posts flow through the same
+    # handlers (MongoDB, print, CSV) without duplicating wiring.
+    social_agent = UnstructuredAgent(
+        dispatcher=agent.dispatcher,
+        keywords=[],  # match structured agent's keyword filter setting
+        enable_stocktwits=enable_stocktwits,
+        enable_bluesky=enable_bluesky,
+    )
+
     await agent.start()
+    if enable_stocktwits or enable_bluesky:
+        await social_agent.start()
+
     try:
         while True:
             await asyncio.sleep(3600)
     except (KeyboardInterrupt, asyncio.CancelledError):
         await agent.stop()
+        await social_agent.stop()
     finally:
         for h in storage.values():
             await h.close()
@@ -132,15 +150,25 @@ if __name__ == "__main__":
             "Pass a URI explicitly to override."
         ),
     )
+    p.add_argument("--stocktwits", action="store_true", default=False,
+                   help="Enable StockTwits social feed (22-ticker watchlist)")
+    p.add_argument("--bluesky", action="store_true", default=False,
+                   help="Enable Bluesky social search (27 financial hashtags)")
     args = p.parse_args()
 
-    any_specified = args.rss or args.sec or args.fda
-    enable_rss = args.rss if any_specified else True
-    enable_sec = args.sec if any_specified else True
-    enable_fda = args.fda if any_specified else True
+    # Structured: if none of --rss/--sec/--fda given, enable all three
+    any_structured = args.rss or args.sec or args.fda
+    enable_rss = args.rss if any_structured else True
+    enable_sec = args.sec if any_structured else True
+    enable_fda = args.fda if any_structured else True
+
+    # Social: opt-in only (no credentials needed but adds traffic)
+    enable_stocktwits = args.stocktwits
+    enable_bluesky = args.bluesky
 
     asyncio.run(main(
         enable_rss, enable_sec, enable_fda,
+        enable_stocktwits, enable_bluesky,
         args.csv,
         args.rss_interval, args.sec_interval, args.fda_interval,
         args.sentiment,

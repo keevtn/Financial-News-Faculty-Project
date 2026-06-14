@@ -37,7 +37,7 @@ async def list_news(
     request: Request,
     limit: int = Query(default=100, ge=1, le=500, description="Max items to return"),
     offset: int = Query(default=0, ge=0, description="Pagination offset"),
-    source_type: Optional[str] = Query(default=None, description="Filter: rss | sec | fda"),
+    source_type: Optional[str] = Query(default=None, description="Filter: rss | sec | fda | social"),
     topic: Optional[str] = Query(default=None, description="Filter by topic label"),
     search: Optional[str] = Query(default=None, description="Keyword search in title + description"),
 ) -> dict[str, Any]:

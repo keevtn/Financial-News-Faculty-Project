@@ -150,8 +150,11 @@ class FinBERTAnalyzer:
     def analyze(self, item: NewsItem) -> SentimentResult:
         if self._pipeline is None:
             self._load()
-        # top_k=None on a single string returns a flat list of class dicts
-        raw: list[dict[str, Any]] = self._pipeline(_item_text(item))
+        raw = self._pipeline(_item_text(item))
+        # Newer transformers (>=4.35) wraps single-input top_k=None in a list-of-lists:
+        # [[{label, score}, ...]] — unwrap to [{label, score}, ...] before scoring.
+        if raw and isinstance(raw[0], list):
+            raw = raw[0]
         return self._result_from_raw(raw)
 
     def analyze_batch(self, items: list[NewsItem]) -> list[SentimentResult]:
