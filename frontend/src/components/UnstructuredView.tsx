@@ -1,13 +1,265 @@
-import { NewsItem } from "@/types/news";
+"use client";
+
+import { useState, useEffect } from "react";
+import { NewsItem, SentimentLabel, SocialFilterState, SortBy } from "@/types/news";
+import { ALL_SENTIMENTS, ALL_PLATFORMS } from "@/lib/mockData";
 import SocialFeed from "@/components/SocialFeed";
 import StatsBar from "@/components/StatsBar";
 
-interface UnstructuredViewProps {
-  items: NewsItem[];
-  scoringPending?: boolean;
+// ── Constants ──────────────────────────────────────────────────────────────
+
+const MAX_LIMIT = 500;
+
+const SENTIMENT_CONFIG: Record<SentimentLabel, { icon: string; cls: string }> = {
+  bullish: { icon: "▲", cls: "text-emerald-400" },
+  bearish: { icon: "▼", cls: "text-red-400" },
+  neutral: { icon: "◆", cls: "text-slate-400" },
+};
+
+const SORT_OPTIONS: { value: SortBy; label: string }[] = [
+  { value: "latest",     label: "Latest first"  },
+  { value: "score_desc", label: "▲ Most bullish" },
+  { value: "score_asc",  label: "▼ Most bearish" },
+];
+
+const PLATFORM_COLOR: Record<string, string> = {
+  Reddit:     "text-orange-400",
+  StockTwits: "text-sky-400",
+  Bluesky:    "text-violet-400",
+};
+
+// ── Shared sub-components ──────────────────────────────────────────────────
+
+function toggle<T>(set: Set<T>, value: T): Set<T> {
+  const next = new Set(set);
+  next.has(value) ? next.delete(value) : next.add(value);
+  return next;
 }
 
-// Shown when no social data has arrived yet (backend not running social sources)
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="mb-5">
+      <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-2">
+        {label}
+      </p>
+      <div className="space-y-1.5">{children}</div>
+    </div>
+  );
+}
+
+function FilterRow({
+  checked,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  label: React.ReactNode;
+}) {
+  return (
+    <label className="flex items-center gap-2 cursor-pointer group">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={onChange}
+        className="accent-[#00d4aa] w-3 h-3 shrink-0"
+      />
+      <span className="text-xs group-hover:text-slate-200 transition-colors">{label}</span>
+    </label>
+  );
+}
+
+// ── Social filter sidebar ──────────────────────────────────────────────────
+
+interface SidebarProps {
+  filters: SocialFilterState;
+  onChange: (f: SocialFilterState) => void;
+  tickerCounts: Map<string, number>;
+}
+
+function SocialFilterSidebar({ filters, onChange, tickerCounts }: SidebarProps) {
+  const sortedTickers = Array.from(tickerCounts.entries()).sort(
+    (a, b) => b[1] - a[1] || a[0].localeCompare(b[0])
+  );
+
+  const [pendingLimit, setPendingLimit] = useState(String(filters.limit ?? 100));
+
+  useEffect(() => {
+    setPendingLimit(String(filters.limit ?? 100));
+  }, [filters.limit]);
+
+  const parsedLimit = parseInt(pendingLimit, 10);
+  const limitWarning =
+    !isNaN(parsedLimit) && parsedLimit > MAX_LIMIT
+      ? `Maximum is ${MAX_LIMIT} — will fetch ${MAX_LIMIT}`
+      : !isNaN(parsedLimit) && parsedLimit < 1 && pendingLimit !== ""
+      ? "Must be at least 1"
+      : null;
+
+  function commitLimit() {
+    if (pendingLimit === "" || isNaN(parsedLimit)) {
+      onChange({ ...filters, limit: null });
+    } else if (parsedLimit < 1) {
+      // invalid — warning shown, do nothing
+    } else {
+      const clamped = Math.min(parsedLimit, MAX_LIMIT);
+      onChange({ ...filters, limit: clamped });
+      setPendingLimit(String(clamped));
+    }
+  }
+
+  return (
+    <aside className="w-52 shrink-0 bg-[#0a0e1a] border-r border-[#1e2d4a] overflow-y-auto scrollbar-thin py-4 px-3">
+      {/* Search */}
+      <div className="mb-5">
+        <input
+          type="text"
+          placeholder="Search posts…"
+          value={filters.search}
+          onChange={(e) => onChange({ ...filters, search: e.target.value })}
+          className="w-full bg-[#0f1629] border border-[#1e2d4a] rounded px-2.5 py-1.5 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-[#00d4aa] transition-colors"
+        />
+      </div>
+
+      {/* Limit */}
+      <div className="mb-5">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-2">
+          Show recent
+        </p>
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            min={1}
+            placeholder="100"
+            value={pendingLimit}
+            onChange={(e) => setPendingLimit(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && commitLimit()}
+            className="w-full bg-[#0f1629] border border-[#1e2d4a] rounded px-2.5 py-1.5 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-[#00d4aa] transition-colors"
+          />
+          <button
+            onClick={commitLimit}
+            className="shrink-0 text-[10px] px-2 py-1.5 rounded bg-[#0f1629] border border-[#1e2d4a] text-[#00d4aa] hover:bg-[#00d4aa]/10 transition-colors"
+          >
+            Apply
+          </button>
+        </div>
+        {limitWarning && (
+          <p className="text-[10px] text-amber-400 mt-1">{limitWarning}</p>
+        )}
+      </div>
+
+      <Section label="Sort By">
+        {SORT_OPTIONS.map(({ value, label }) => (
+          <label key={value} className="flex items-center gap-2 cursor-pointer group">
+            <input
+              type="radio"
+              name="social-sortBy"
+              checked={filters.sortBy === value}
+              onChange={() => onChange({ ...filters, sortBy: value })}
+              className="accent-[#00d4aa] w-3 h-3 shrink-0"
+            />
+            <span className="text-xs group-hover:text-slate-200 transition-colors">
+              {label}
+            </span>
+          </label>
+        ))}
+      </Section>
+
+      <Section label="Platform">
+        {ALL_PLATFORMS.map((platform) => (
+          <FilterRow
+            key={platform}
+            checked={filters.platforms.has(platform)}
+            onChange={() => onChange({ ...filters, platforms: toggle(filters.platforms, platform) })}
+            label={
+              <span className={PLATFORM_COLOR[platform] ?? "text-slate-300"}>
+                {platform}
+              </span>
+            }
+          />
+        ))}
+      </Section>
+
+      <Section label="Sentiment">
+        {ALL_SENTIMENTS.map((s) => {
+          const { icon, cls } = SENTIMENT_CONFIG[s];
+          return (
+            <div key={s} className="flex items-center justify-between">
+              <FilterRow
+                checked={filters.sentiments.has(s)}
+                onChange={() =>
+                  onChange({ ...filters, sentiments: toggle(filters.sentiments, s) })
+                }
+                label={
+                  <span className={`flex items-center gap-1 ${cls}`}>
+                    <span className="text-[10px]">{icon}</span>
+                    <span className="capitalize">{s}</span>
+                  </span>
+                }
+              />
+              <button
+                onClick={() => onChange({ ...filters, sentiments: new Set([s]) })}
+                title={`Show only ${s}`}
+                className="text-[9px] text-slate-600 hover:text-slate-400 transition-colors px-1 shrink-0"
+              >
+                only
+              </button>
+            </div>
+          );
+        })}
+      </Section>
+
+      <Section label="Tickers">
+        {sortedTickers.length === 0 ? (
+          <p className="text-[10px] text-slate-600 italic">No tickers detected</p>
+        ) : (
+          sortedTickers.map(([ticker, count]) => (
+            <FilterRow
+              key={ticker}
+              checked={filters.tickers.has(ticker)}
+              onChange={() =>
+                onChange({ ...filters, tickers: toggle(filters.tickers, ticker) })
+              }
+              label={
+                <span className="flex items-center gap-1.5">
+                  <span className="font-mono text-sky-400 text-[10px]">{ticker}</span>
+                  <span className="text-slate-600 text-[10px]">({count})</span>
+                </span>
+              }
+            />
+          ))
+        )}
+        {filters.tickers.size > 0 && (
+          <button
+            onClick={() => onChange({ ...filters, tickers: new Set() })}
+            className="text-[10px] text-slate-600 hover:text-[#00d4aa] transition-colors pt-1"
+          >
+            Clear ticker filter
+          </button>
+        )}
+      </Section>
+
+      <button
+        onClick={() =>
+          onChange({
+            search: "",
+            sentiments: new Set(ALL_SENTIMENTS),
+            tickers: new Set(),
+            platforms: new Set(ALL_PLATFORMS),
+            sortBy: "latest",
+            limit: 100,
+          })
+        }
+        className="w-full text-[11px] text-slate-600 hover:text-[#00d4aa] transition-colors py-1"
+      >
+        Reset all filters
+      </button>
+    </aside>
+  );
+}
+
+// ── Empty state ────────────────────────────────────────────────────────────
+
 const PLANNED_SOURCES = [
   {
     label: "Reddit",
@@ -92,37 +344,34 @@ function EmptyState() {
   );
 }
 
-export default function UnstructuredView({ items, scoringPending }: UnstructuredViewProps) {
-  if (items.length === 0) {
+// ── Main component ─────────────────────────────────────────────────────────
+
+interface UnstructuredViewProps {
+  items: NewsItem[];
+  totalCount: number;
+  filters: SocialFilterState;
+  onChange: (f: SocialFilterState) => void;
+  tickerCounts: Map<string, number>;
+  scoringPending?: boolean;
+}
+
+export default function UnstructuredView({
+  items,
+  totalCount,
+  filters,
+  onChange,
+  tickerCounts,
+  scoringPending,
+}: UnstructuredViewProps) {
+  if (totalCount === 0) {
     return <EmptyState />;
   }
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      {/* Reuse StatsBar — calculates sentiment counts from social items */}
       <StatsBar items={items} />
       <div className="flex flex-1 overflow-hidden">
-        {/* Social source summary sidebar */}
-        <aside className="w-52 shrink-0 bg-[#0a0e1a] border-r border-[#1e2d4a] overflow-y-auto py-4 px-3">
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-3">
-            Sources
-          </p>
-          {/* Count items per source name */}
-          {Array.from(
-            items.reduce((acc, item) => {
-              acc.set(item.source, (acc.get(item.source) ?? 0) + 1);
-              return acc;
-            }, new Map<string, number>())
-          )
-            .sort((a, b) => b[1] - a[1])
-            .map(([source, count]) => (
-              <div key={source} className="flex items-center justify-between mb-1.5">
-                <span className="text-[10px] text-slate-400 truncate">{source}</span>
-                <span className="text-[10px] text-slate-600 ml-1 shrink-0">{count}</span>
-              </div>
-            ))}
-        </aside>
-
+        <SocialFilterSidebar filters={filters} onChange={onChange} tickerCounts={tickerCounts} />
         <SocialFeed items={items} scoringPending={scoringPending} />
       </div>
     </div>

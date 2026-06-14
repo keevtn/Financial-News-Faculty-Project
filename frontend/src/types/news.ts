@@ -56,3 +56,12 @@ export interface FilterState {
   sortBy: SortBy;
   limit: number | null;
 }
+
+export interface SocialFilterState {
+  search: string;
+  sentiments: Set<SentimentLabel>;
+  tickers: Set<string>;
+  platforms: Set<string>;
+  sortBy: SortBy;
+  limit: number | null;
+}

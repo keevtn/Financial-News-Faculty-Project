@@ -224,3 +224,4 @@ export const ALL_SOURCE_TYPES: SourceType[] = ["rss", "sec", "fda", "social"];
 // Source types that belong to the structured pipeline (no social)
 export const STRUCTURED_SOURCE_TYPES: SourceType[] = ["rss", "sec", "fda"];
 export const ALL_SENTIMENTS: SentimentLabel[] = ["bullish", "bearish", "neutral"];
+export const ALL_PLATFORMS: string[] = ["Reddit", "StockTwits", "Bluesky"];

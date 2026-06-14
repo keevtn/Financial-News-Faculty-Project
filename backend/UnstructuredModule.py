@@ -390,6 +390,12 @@ class UnstructuredAgent:
             keywords if keywords is not None else FILTER_KEYWORDS
         )
         self._classifier = TopicClassifier()
+        try:
+            from ticker_extractor import TickerExtractor
+            self._ticker_extractor: "TickerExtractor | None" = TickerExtractor()
+        except ImportError:
+            log.warning("ticker_extractor not found — social tickers won't be tagged")
+            self._ticker_extractor = None
 
         self.enable_stocktwits = enable_stocktwits
         self.enable_bluesky = enable_bluesky
@@ -406,13 +412,40 @@ class UnstructuredAgent:
         )
         self._tasks: list[asyncio.Task] = []
 
+    def _extract_tickers(self, item: NewsItem) -> tuple[str, ...]:
+        """
+        Combine platform-provided tickers with TickerExtractor results.
+        StockTwits items carry API-resolved symbols in extra["ticker"] and extra["symbols"].
+        For Reddit and Bluesky, TickerExtractor handles $TICKER patterns and company names.
+        """
+        found: set[str] = set()
+
+        # StockTwits: watchlist ticker + API-tagged symbol list (strip .X crypto suffix)
+        wl_ticker = item.extra.get("ticker")
+        if wl_ticker:
+            found.add(str(wl_ticker).replace(".X", ""))
+        for sym in item.extra.get("symbols", []):
+            if sym:
+                found.add(str(sym).replace(".X", ""))
+
+        # TickerExtractor: $TICKER, (TICKER), NYSE: TICKER, company name map
+        if self._ticker_extractor is not None:
+            for t in self._ticker_extractor.extract(item.title, item.description):
+                found.add(t)
+
+        return tuple(sorted(found))
+
     async def _dispatch_loop(self) -> None:
-        """Drain the shared queue: filter → classify → dispatch."""
+        """Drain the shared queue: filter → classify → extract tickers → dispatch."""
         while True:
             item = await self._queue.get()
             try:
                 if self._filter.accepts(item):
-                    item = replace(item, topic=self._classifier.classify(item))
+                    item = replace(
+                        item,
+                        topic=self._classifier.classify(item),
+                        tickers=self._extract_tickers(item),
+                    )
                     await self.dispatcher.dispatch(item)
                 else:
                     log.debug(
