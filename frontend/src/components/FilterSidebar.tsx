@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { FilterState, SentimentLabel, SortBy, SourceType } from "@/types/news";
-import { ALL_TOPICS, ALL_SOURCE_TYPES, ALL_SENTIMENTS } from "@/lib/mockData";
+import { ALL_TOPICS, ALL_SENTIMENTS, STRUCTURED_SOURCE_TYPES } from "@/lib/mockData";
 
 interface FilterSidebarProps {
   filters: FilterState;
@@ -23,9 +23,10 @@ const TOPIC_COLORS: Record<string, string> = {
 };
 
 const SOURCE_LABELS: Record<SourceType, string> = {
-  rss: "RSS Feeds",
-  sec: "SEC EDGAR",
-  fda: "FDA",
+  rss:    "RSS Feeds",
+  sec:    "SEC EDGAR",
+  fda:    "FDA",
+  social: "Social",
 };
 
 const SENTIMENT_CONFIG: Record<SentimentLabel, { icon: string; cls: string }> = {
@@ -181,7 +182,7 @@ export default function FilterSidebar({ filters, onChange, tickerCounts }: Filte
       </Section>
 
       <Section label="Source Type">
-        {ALL_SOURCE_TYPES.map((st) => (
+        {STRUCTURED_SOURCE_TYPES.map((st) => (
           <FilterRow
             key={st}
             checked={filters.sourceTypes.has(st)}
@@ -256,7 +257,7 @@ export default function FilterSidebar({ filters, onChange, tickerCounts }: Filte
         onClick={() =>
           onChange({
             topics: new Set(ALL_TOPICS),
-            sourceTypes: new Set(ALL_SOURCE_TYPES),
+            sourceTypes: new Set(STRUCTURED_SOURCE_TYPES),
             sentiments: new Set(ALL_SENTIMENTS),
             tickers: new Set(),
             search: "",

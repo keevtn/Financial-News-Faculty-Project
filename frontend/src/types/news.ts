@@ -1,4 +1,4 @@
-export type SourceType = "rss" | "sec" | "fda";
+export type SourceType = "rss" | "sec" | "fda" | "social";
 
 export type SentimentLabel = "bullish" | "bearish" | "neutral";
 

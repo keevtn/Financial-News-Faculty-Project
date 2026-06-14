@@ -1,17 +1,19 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import { MOCK_NEWS, ALL_TOPICS, ALL_SOURCE_TYPES, ALL_SENTIMENTS } from "@/lib/mockData";
+import { MOCK_NEWS, ALL_TOPICS, ALL_SENTIMENTS, STRUCTURED_SOURCE_TYPES } from "@/lib/mockData";
 import { fetchNews, scoreSentimentBatch } from "@/lib/api";
 import { FilterState, NewsItem, SentimentLabel, SourceType } from "@/types/news";
 import Header from "@/components/Header";
 import FilterSidebar from "@/components/FilterSidebar";
 import NewsFeed from "@/components/NewsFeed";
 import StatsBar from "@/components/StatsBar";
+import TabNav, { TabId } from "@/components/TabNav";
+import UnstructuredView from "@/components/UnstructuredView";
 
 const DEFAULT_FILTERS: FilterState = {
   topics: new Set(ALL_TOPICS),
-  sourceTypes: new Set(ALL_SOURCE_TYPES),
+  sourceTypes: new Set(STRUCTURED_SOURCE_TYPES),
   sentiments: new Set(ALL_SENTIMENTS),
   tickers: new Set(),
   search: "",
@@ -23,6 +25,17 @@ export default function HomePage() {
   const [items, setItems] = useState<NewsItem[]>([]);
   const [scoringPending, setScoringPending] = useState(true);
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
+  const [activeTab, setActiveTab] = useState<TabId>("structured");
+
+  // Split at source_type so structured and social tabs never share items.
+  const structuredItems = useMemo(
+    () => items.filter((i) => i.source_type !== "social"),
+    [items]
+  );
+  const socialItems = useMemo(
+    () => items.filter((i) => i.source_type === "social"),
+    [items]
+  );
 
   // Fetch news from MongoDB (falls back to mock), then score unscored items with FinBERT.
   // Re-runs when committed limit changes.
@@ -34,7 +47,8 @@ export default function HomePage() {
       if (cancelled) return;
       setItems(fetched);
 
-      const unscored = fetched.filter((i) => !i.sentiment);
+      // Only run FinBERT on structured items — social items use fast-path scoring
+      const unscored = fetched.filter((i) => !i.sentiment && i.source_type !== "social");
       if (unscored.length > 0) {
         const CHUNK = 100;
         for (let i = 0; i < unscored.length; i += CHUNK) {
@@ -62,9 +76,9 @@ export default function HomePage() {
     };
   }, [filters.limit]);
 
-  // All filters except tickers, plus sort — ticker counts are derived from this.
+  // All filters except tickers, plus sort — runs only on structured items.
   const preTickerFiltered = useMemo(() => {
-    const result = items.filter((item) => {
+    const result = structuredItems.filter((item) => {
       if (!filters.sourceTypes.has(item.source_type as SourceType)) return false;
       if (item.sentiment && !filters.sentiments.has(item.sentiment.label as SentimentLabel))
         return false;
@@ -91,7 +105,7 @@ export default function HomePage() {
       );
     }
     return result;
-  }, [items, filters]);
+  }, [structuredItems, filters]);
 
   // Count how many pre-filtered items each ticker appears in.
   const tickerCounts = useMemo(() => {
@@ -118,11 +132,18 @@ export default function HomePage() {
   return (
     <div className="flex flex-col h-screen overflow-hidden">
       <Header itemCount={filtered.length} scoringPending={scoringPending} />
-      <StatsBar items={filtered} />
-      <div className="flex flex-1 overflow-hidden">
-        <FilterSidebar filters={filters} onChange={setFilters} tickerCounts={tickerCounts} />
-        <NewsFeed items={filtered} scoringPending={scoringPending} />
-      </div>
+      <TabNav active={activeTab} onChange={setActiveTab} />
+      {activeTab === "structured" ? (
+        <>
+          <StatsBar items={filtered} />
+          <div className="flex flex-1 overflow-hidden">
+            <FilterSidebar filters={filters} onChange={setFilters} tickerCounts={tickerCounts} />
+            <NewsFeed items={filtered} scoringPending={scoringPending} />
+          </div>
+        </>
+      ) : (
+        <UnstructuredView items={socialItems} scoringPending={scoringPending} />
+      )}
     </div>
   );
 }

@@ -175,6 +175,44 @@ export const MOCK_NEWS: NewsItem[] = [
     url: "#",
     topic: "Energy",
   },
+  // --- Social mock items (source_type: "social") ---
+  {
+    id: "16",
+    source: "Reddit - WallStreetBets",
+    source_type: "social",
+    title: "NVDA calls printing — AI demand not slowing anytime soon",
+    published_at: ago(8),
+    description:
+      "Loaded up on NVDA $900 calls expiring Friday. Data center capex from the hyperscalers is only going up. Jensen Huang basically said supply is constrained through next year. Not financial advice.",
+    url: "#",
+    topic: "Equities, Technology",
+    tickers: ["NVDA"],
+  },
+  {
+    id: "17",
+    source: "StockTwits — $BTC.X",
+    source_type: "social",
+    title: "Bitcoin holding above $100k support — next leg up incoming $BTC",
+    published_at: ago(22),
+    description:
+      "Bitcoin holding above $100k support — next leg up incoming $BTC. Spot ETF inflows still strong. Institutions not selling.",
+    url: "#",
+    topic: "Crypto",
+    tickers: ["BTC"],
+    extra: { st_sentiment: "Bullish", ticker: "BTC.X", st_user: "cryptobull99" },
+  },
+  {
+    id: "18",
+    source: "Bluesky",
+    source_type: "social",
+    title: "Fed minutes confirmed what the bond market already knew — no cuts until Q3 at earliest #federalreserve #bonds",
+    published_at: ago(35),
+    description:
+      "Fed minutes confirmed what the bond market already knew — no cuts until Q3 at earliest. 10yr yield moving back toward 4.9. #federalreserve #bonds #macro",
+    url: "#",
+    topic: "Macro, Bonds",
+    extra: { bsky_handle: "macrowatcher.bsky.social", likes: 47, replies: 12 },
+  },
 ];
 
 export const ALL_TOPICS: TopicLabel[] = [
@@ -182,5 +220,7 @@ export const ALL_TOPICS: TopicLabel[] = [
   "Regulatory", "Bonds", "Commodities", "Technology", "General",
 ];
 
-export const ALL_SOURCE_TYPES: SourceType[] = ["rss", "sec", "fda"];
+export const ALL_SOURCE_TYPES: SourceType[] = ["rss", "sec", "fda", "social"];
+// Source types that belong to the structured pipeline (no social)
+export const STRUCTURED_SOURCE_TYPES: SourceType[] = ["rss", "sec", "fda"];
 export const ALL_SENTIMENTS: SentimentLabel[] = ["bullish", "bearish", "neutral"];
