@@ -44,6 +44,7 @@ MongoDB Atlas stores all ingested articles. The frontend fetches from MongoDB vi
 - **Social fast-path** — social items never block on FinBERT; instead:
   1. StockTwits human label is used directly if present (zero latency)
   2. Loughran-McDonald keyword scorer is used as fallback (~1 ms, no GPU)
+- **Social ticker tagging** — the same `TickerExtractor` used by the structured pipeline runs on every social item; StockTwits items additionally inherit the API-resolved symbol list from `extra["symbols"]` so the watched ticker is always tagged even when not mentioned by name
 - **Loughran-McDonald lexicon** — lightweight fallback (~150 built-in terms, no ML model required); supports loading the full ~3,500-word master dictionary CSV
 - All analyzers share a common `SentimentAnalyzer` protocol and return a `SentimentResult(score, label, confidence)`
 
@@ -83,7 +84,7 @@ MongoDB Atlas stores all ingested articles. The frontend fetches from MongoDB vi
   - Sentiment badge displays label and numeric score (e.g. `▲ BULLISH +0.87`)
   - Filter sidebar — sort by sentiment score, filter by source type, topic, sentiment label, ticker (with article counts), and free-text search; configurable article limit (1–500, default 100)
   - Stats bar showing article counts per source type and sentiment breakdown
-- **Unstructured tab** — social feed view for Reddit, StockTwits, and Bluesky posts; uses fast-path sentiment labels
+- **Unstructured tab** — social feed view for Reddit, StockTwits, and Bluesky posts with a full filter sidebar mirroring the structured tab: search, sort by sentiment score, platform filter (Reddit / StockTwits / Bluesky), sentiment filter (with "only" shortcut), ticker filter with mention counts and clear button, and configurable article limit (1–500)
 - Source badges: RSS (blue), SEC (emerald), FDA (rose), SOCIAL (violet)
 
 ---
