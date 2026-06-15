@@ -26,9 +26,10 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Optional, Protocol
 
-from IngestionModule import NewsItem
+if TYPE_CHECKING:
+    from IngestionModule import NewsItem
 
 log = logging.getLogger("ingestion_agent.sentiment")
 
@@ -319,26 +320,44 @@ class LoughranMcDonaldAnalyzer:
             len(bullish), len(bearish), path,
         )
 
-    def analyze(self, item: NewsItem) -> SentimentResult:
-        # Use a generous character limit — the LM scorer benefits from full text
-        tokens = _tokenise(_item_text(item, max_chars=2048))
+    def _score_text(self, text: str) -> SentimentResult:
+        tokens = _tokenise(text[:2048])
         if not tokens:
             return SentimentResult(score=0.0, label="neutral", confidence=0.0)
-
         bullish_hits = sum(1 for t in tokens if t in self._bullish)
         bearish_hits = sum(1 for t in tokens if t in self._bearish)
-        total = len(tokens)
-
-        raw_score = (bullish_hits - bearish_hits) / total
-        score = max(-1.0, min(1.0, raw_score))
+        hits = bullish_hits + bearish_hits
+        if hits == 0:
+            return SentimentResult(score=0.0, label="neutral", confidence=0.0)
+        # Balance-based scoring: direction comes from the ratio of bullish to
+        # bearish hits (not diluted by overall length), scaled by a magnitude
+        # factor that grows with how many sentiment words were found.  This keeps
+        # signal intact on long social posts where a few strong words would
+        # otherwise wash out below the neutral threshold when divided by total
+        # token count.
+        directional = (bullish_hits - bearish_hits) / hits       # [-1, 1]
+        magnitude = min(1.0, hits / 3.0)                          # 1→0.33 … 3+→1.0
+        score = max(-1.0, min(1.0, directional * magnitude))
         label = _label_from_score(score)
-        # 5 sentiment-word hits → confidence = 1.0; scales linearly below that
-        confidence = min(1.0, (bullish_hits + bearish_hits) / 5.0)
+        confidence = min(1.0, hits / 5.0)
         return SentimentResult(
             score=round(score, 4),
             label=label,
             confidence=round(confidence, 4),
         )
+
+    def analyze(self, item: NewsItem) -> SentimentResult:
+        return self._score_text(_item_text(item, max_chars=2048))
+
+    def analyze_text_batch(
+        self, pairs: list[tuple[str, str]]
+    ) -> list[SentimentResult]:
+        """Score a batch of (title, description) pairs — mirrors FinBERTAnalyzer's interface."""
+        return [
+            self._score_text(f"{title}. {description}".strip())
+            for title, description in pairs
+        ]
+
 
 
 # ---------------------------------------------------------------------------
