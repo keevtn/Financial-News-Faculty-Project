@@ -43,7 +43,7 @@ const SORT_OPTIONS: { value: SortBy; label: string }[] = [
 
 function toggle<T>(set: Set<T>, value: T): Set<T> {
   const next = new Set(set);
-  next.has(value) ? next.delete(value) : next.add(value);
+  if (next.has(value)) { next.delete(value); } else { next.add(value); }
   return next;
 }
 

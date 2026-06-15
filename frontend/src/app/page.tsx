@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import { MOCK_NEWS, ALL_TOPICS, ALL_SENTIMENTS, STRUCTURED_SOURCE_TYPES, ALL_PLATFORMS } from "@/lib/mockData";
+import { ALL_TOPICS, ALL_SENTIMENTS, STRUCTURED_SOURCE_TYPES, ALL_PLATFORMS } from "@/lib/mockData";
 import { fetchNews, scoreSentimentBatch, scoreSocialSentimentBatch } from "@/lib/api";
 import { FilterState, NewsItem, SentimentLabel, SocialFilterState, SourceType } from "@/types/news";
 import Header from "@/components/Header";
