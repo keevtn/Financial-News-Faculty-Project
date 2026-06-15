@@ -5,6 +5,10 @@ pymongo[srv]
 python-dotenv
 slowapi
 yfinance
+# Ingestion pipeline (in-process when RUN_INGESTION=true — see ingestion_runner.py)
+aiohttp
+feedparser
+python-dateutil
 # FinBERT (optional — only needed for local high-accuracy scoring)
 # Uncomment both lines if torch is available; middleware auto-falls back to
 # Loughran-McDonald when these are absent (works fine on free hosting tiers).

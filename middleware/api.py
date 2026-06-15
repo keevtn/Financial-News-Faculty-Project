@@ -90,7 +90,21 @@ async def lifespan(app: FastAPI):
         app.state.mongo_client = None
         app.state.news_collection = None
 
+    # In-process ingestion (only when RUN_INGESTION=true — see ingestion_runner).
+    # Keeps the feeds fresh on the hosted deployment without a separate worker.
+    try:
+        from middleware.ingestion_runner import start_ingestion
+        await start_ingestion(app)
+    except Exception as exc:
+        log.error("Failed to start in-process ingestion: %s", exc)
+
     yield
+
+    try:
+        from middleware.ingestion_runner import stop_ingestion
+        await stop_ingestion(app)
+    except Exception as exc:
+        log.error("Failed to stop in-process ingestion: %s", exc)
 
     if getattr(app.state, "mongo_client", None):
         app.state.mongo_client.close()
