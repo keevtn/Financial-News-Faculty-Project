@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { MOCK_NEWS, ALL_TOPICS, ALL_SENTIMENTS, STRUCTURED_SOURCE_TYPES, ALL_PLATFORMS } from "@/lib/mockData";
-import { fetchNews, scoreSentimentBatch } from "@/lib/api";
+import { fetchNews, scoreSentimentBatch, scoreSocialSentimentBatch } from "@/lib/api";
 import { FilterState, NewsItem, SentimentLabel, SocialFilterState, SourceType } from "@/types/news";
 import Header from "@/components/Header";
 import FilterSidebar from "@/components/FilterSidebar";
@@ -41,6 +41,7 @@ function getPlatform(source: string): string {
 export default function HomePage() {
   const [items, setItems] = useState<NewsItem[]>([]);
   const [scoringPending, setScoringPending] = useState(true);
+  const [socialScoringPending, setSocialScoringPending] = useState(true);
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
   const [socialFilters, setSocialFilters] = useState<SocialFilterState>(DEFAULT_SOCIAL_FILTERS);
   const [activeTab, setActiveTab] = useState<TabId>("structured");
@@ -65,27 +66,83 @@ export default function HomePage() {
       if (cancelled) return;
       setItems(fetched);
 
-      // Only run FinBERT on structured items — social items use fast-path scoring
-      const unscored = fetched.filter((i) => !i.sentiment && i.source_type !== "social");
-      if (unscored.length > 0) {
-        const CHUNK = 100;
-        for (let i = 0; i < unscored.length; i += CHUNK) {
-          const batch = unscored.slice(i, i + CHUNK);
-          const scored = await scoreSentimentBatch(
-            batch.map((it) => ({ id: it.id, title: it.title, description: it.description }))
-          );
-          if (cancelled) return;
-          if (Object.keys(scored).length > 0) {
-            setItems((prev) =>
-              prev.map((item) => ({
-                ...item,
-                sentiment: scored[item.id] ?? item.sentiment,
-              }))
-            );
+      // Run structured (FinBERT) and social (LM) scoring in parallel so
+      // FinBERT latency doesn't block social sentiment from appearing.
+      await Promise.all([
+
+        // ── Structured: FinBERT (slow, high-accuracy) ────────────────────────
+        (async () => {
+          const unscored = fetched.filter((i) => !i.sentiment && i.source_type !== "social");
+          if (unscored.length > 0) {
+            const CHUNK = 100;
+            for (let i = 0; i < unscored.length; i += CHUNK) {
+              const batch = unscored.slice(i, i + CHUNK);
+              const scored = await scoreSentimentBatch(
+                batch.map((it) => ({ id: it.id, title: it.title, description: it.description }))
+              );
+              if (cancelled) return;
+              if (Object.keys(scored).length > 0) {
+                setItems((prev) =>
+                  prev.map((item) => ({
+                    ...item,
+                    sentiment: scored[item.id] ?? item.sentiment,
+                  }))
+                );
+              }
+            }
           }
-        }
-      }
-      setScoringPending(false);
+          if (!cancelled) setScoringPending(false);
+        })(),
+
+        // ── Social: StockTwits labels first, then LM keyword scorer ──────────
+        (async () => {
+          const unscoredSocial = fetched.filter((i) => !i.sentiment && i.source_type === "social");
+          if (unscoredSocial.length > 0) {
+            // Pass 1: StockTwits human labels — instant, no API call
+            const stLabelled: Record<string, { score: number; label: string; confidence: number }> = {};
+            const needsLM: typeof unscoredSocial = [];
+            for (const item of unscoredSocial) {
+              const st = item.extra?.st_sentiment as string | undefined;
+              if (st === "Bullish") {
+                stLabelled[item.id] = { score: 0.5, label: "bullish", confidence: 0.8 };
+              } else if (st === "Bearish") {
+                stLabelled[item.id] = { score: -0.5, label: "bearish", confidence: 0.8 };
+              } else {
+                needsLM.push(item);
+              }
+            }
+            if (Object.keys(stLabelled).length > 0 && !cancelled) {
+              setItems((prev) =>
+                prev.map((item) => ({
+                  ...item,
+                  sentiment: (stLabelled[item.id] as typeof item.sentiment) ?? item.sentiment,
+                }))
+              );
+            }
+            // Pass 2: LM keyword scoring for Reddit/Bluesky items (~1 ms/item)
+            if (needsLM.length > 0) {
+              const CHUNK = 100;
+              for (let i = 0; i < needsLM.length; i += CHUNK) {
+                const batch = needsLM.slice(i, i + CHUNK);
+                const scored = await scoreSocialSentimentBatch(
+                  batch.map((it) => ({ id: it.id, title: it.title, description: it.description }))
+                );
+                if (cancelled) return;
+                if (Object.keys(scored).length > 0) {
+                  setItems((prev) =>
+                    prev.map((item) => ({
+                      ...item,
+                      sentiment: scored[item.id] ?? item.sentiment,
+                    }))
+                  );
+                }
+              }
+            }
+          }
+          if (!cancelled) setSocialScoringPending(false);
+        })(),
+
+      ]);
     }
 
     load();
@@ -94,11 +151,11 @@ export default function HomePage() {
     };
   }, [filters.limit]);
 
-  // All unique tickers from structured articles, sorted by mention frequency.
+  // All unique tickers from all articles (structured + social), sorted by mention frequency.
   // Used by the ticker tape — independent of filter state so the tape is stable.
   const allSymbols = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const item of structuredItems) {
+    for (const item of items) {
       for (const t of item.tickers ?? []) {
         counts.set(t, (counts.get(t) ?? 0) + 1);
       }
@@ -106,7 +163,7 @@ export default function HomePage() {
     return [...counts.entries()]
       .sort((a, b) => b[1] - a[1])
       .map(([t]) => t);
-  }, [structuredItems]);
+  }, [items]);
 
   // ── Structured pipeline: three-stage filter ──────────────────────────────
 
@@ -235,7 +292,7 @@ export default function HomePage() {
           filters={socialFilters}
           onChange={setSocialFilters}
           tickerCounts={socialTickerCounts}
-          scoringPending={scoringPending}
+          scoringPending={socialScoringPending}
         />
       )}
     </div>

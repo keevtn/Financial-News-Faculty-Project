@@ -7,6 +7,12 @@ body {
   color: #e2e8f0;
 }
 
+/* ticker tape marquee — duration set via --ticker-duration CSS var on the element */
+@keyframes ticker-scroll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
 /* thin scrollbar for sidebar + feed */
 .scrollbar-thin::-webkit-scrollbar        { width: 4px; }
 .scrollbar-thin::-webkit-scrollbar-track  { background: transparent; }

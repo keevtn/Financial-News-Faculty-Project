@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Query, Request
@@ -31,41 +32,114 @@ def _doc_to_item(doc: dict) -> dict[str, Any]:
     }
 
 
+async def _fetch_guaranteed(
+    collection: Any,
+    base_query: dict[str, Any],
+    source_type_val: str,
+    n: int,
+) -> list[dict[str, Any]]:
+    """
+    Fetch the n most-recent items of a specific source_type while preserving
+    any topic/search filters from base_query. The source_type key in base_query
+    is replaced so a caller-level source_type filter doesn't suppress this fetch.
+    """
+    q = {k: v for k, v in base_query.items() if k != "source_type"}
+    q["source_type"] = source_type_val
+    return await (
+        collection.find(q, {"_id": 0})
+        .sort("published_at", -1)
+        .limit(n)
+        .to_list(length=n)
+    )
+
+
 @router.get("/")
 @limiter.limit("60/minute")
 async def list_news(
     request: Request,
-    limit: int = Query(default=100, ge=1, le=500, description="Max items to return"),
+    limit: int = Query(default=100, ge=1, le=500, description="Max RSS/social items to return"),
     offset: int = Query(default=0, ge=0, description="Pagination offset"),
     source_type: Optional[str] = Query(default=None, description="Filter: rss | sec | fda | social"),
     topic: Optional[str] = Query(default=None, description="Filter by topic label"),
     search: Optional[str] = Query(default=None, description="Keyword search in title + description"),
+    sec_limit: int = Query(default=25, ge=0, le=100, description="Guaranteed minimum SEC items regardless of recency"),
+    fda_limit: int = Query(default=25, ge=0, le=100, description="Guaranteed minimum FDA items regardless of recency"),
 ) -> dict[str, Any]:
+    """
+    Return news items with guaranteed representation from low-volume regulatory
+    sources (SEC, FDA).
+
+    The `limit` parameter controls how many items are returned from the
+    time-sorted main query (RSS + all types combined). On top of that,
+    `sec_limit` and `fda_limit` inject the latest N items from each regulatory
+    source that aren't already in the main result — ensuring they always appear
+    even when high-volume RSS/social feeds dominate the recency window.
+
+    When an explicit `source_type` filter is provided, guaranteed-minimum fetches
+    are skipped because the caller already knows what they want.
+    """
     collection = request.app.state.news_collection
     if collection is None:
         return {"items": [], "total": 0, "limit": limit, "offset": offset}
 
+    # Base filter shared by all queries
     query: dict[str, Any] = {}
     if source_type:
         query["source_type"] = source_type
     if topic:
-        # re.escape prevents ReDoS from user-supplied regex metacharacters
         query["topic"] = {"$regex": re.escape(topic), "$options": "i"}
     if search:
-        safe_search = re.escape(search)
+        safe = re.escape(search)
         query["$or"] = [
-            {"title": {"$regex": safe_search, "$options": "i"}},
-            {"description": {"$regex": safe_search, "$options": "i"}},
+            {"title": {"$regex": safe, "$options": "i"}},
+            {"description": {"$regex": safe, "$options": "i"}},
         ]
 
-    cursor = (
+    # Only apply guaranteed-minimum fetches when no explicit source_type filter.
+    # If the caller already said source_type=rss, injecting SEC docs would be wrong.
+    run_sec = not source_type and sec_limit > 0
+    run_fda = not source_type and fda_limit > 0
+
+    # Run main query + guaranteed-type queries in parallel
+    coros: list[Any] = [
         collection.find(query, {"_id": 0})
         .sort("published_at", -1)
         .skip(offset)
         .limit(limit)
-    )
-    docs = await cursor.to_list(length=limit)
-    total = await collection.count_documents(query)
+        .to_list(length=limit),
+        collection.count_documents(query),
+    ]
+    if run_sec:
+        coros.append(_fetch_guaranteed(collection, query, "sec", sec_limit))
+    if run_fda:
+        coros.append(_fetch_guaranteed(collection, query, "fda", fda_limit))
+
+    results = await asyncio.gather(*coros)
+    main_docs: list[dict[str, Any]] = results[0]
+    total: int = results[1]
+
+    # Collect guaranteed extras that aren't already in the main result
+    extra_docs: list[dict[str, Any]] = []
+    idx = 2
+    if run_sec:
+        extra_docs.extend(results[idx]); idx += 1
+    if run_fda:
+        extra_docs.extend(results[idx])
+
+    if extra_docs:
+        seen = {d.get("content_hash") for d in main_docs}
+        supplemental = [d for d in extra_docs if d.get("content_hash") not in seen]
+        if supplemental:
+            _epoch = datetime.fromtimestamp(0, tz=timezone.utc)
+            docs = sorted(
+                main_docs + supplemental,
+                key=lambda d: d.get("published_at") or _epoch,
+                reverse=True,
+            )
+        else:
+            docs = main_docs
+    else:
+        docs = main_docs
 
     return {
         "items": [_doc_to_item(d) for d in docs],

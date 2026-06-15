@@ -46,7 +46,11 @@ class _BatchScoreRequest(BaseModel):
 @limiter.limit("20/minute")
 async def score_batch(req: _BatchScoreRequest, request: Request) -> dict[str, Any]:
     """
-    Score a batch of news items with FinBERT and return a label + score for each.
+    Score a batch of news items and return a label + score for each.
+
+    Uses FinBERT when available (local dev with torch installed); automatically
+    falls back to the Loughran-McDonald keyword scorer on deployments where
+    torch/transformers are not installed.
 
     Request body:
         {"items": [{"id": "...", "title": "...", "description": "..."}, ...]}
@@ -54,14 +58,48 @@ async def score_batch(req: _BatchScoreRequest, request: Request) -> dict[str, An
     Response:
         {"results": {"<id>": {"score": float, "label": str, "confidence": float}, ...}}
     """
-    analyzer = request.app.state.sentiment_analyzer
+    analyzer = request.app.state.sentiment_analyzer or request.app.state.lm_analyzer
     if analyzer is None:
         raise HTTPException(
             status_code=503,
-            detail="FinBERT model failed to load at startup — check middleware logs.",
+            detail="No sentiment analyzer available — check middleware logs.",
         )
     pairs = [(item.title, item.description) for item in req.items]
     # Run FinBERT inference in a thread so it doesn't block the event loop
+    results: list = await asyncio.to_thread(analyzer.analyze_text_batch, pairs)
+    return {
+        "results": {
+            item.id: {
+                "score": result.score,
+                "label": result.label,
+                "confidence": result.confidence,
+            }
+            for item, result in zip(req.items, results)
+        }
+    }
+
+
+@router.post("/social/batch")
+@limiter.limit("120/minute")
+async def score_social_batch(req: _BatchScoreRequest, request: Request) -> dict[str, Any]:
+    """
+    Score a batch of social/unstructured items with the Loughran-McDonald keyword
+    scorer (~1 ms per item, no GPU required).
+
+    Used by the frontend for social items that arrive without pre-scored sentiment
+    (e.g. when MongoDB is not running or the item was ingested without scoring).
+    StockTwits items with human labels should be handled client-side before calling
+    this endpoint — only pass items that genuinely need keyword scoring.
+
+    Request / response shape is identical to POST /batch.
+    """
+    analyzer = request.app.state.lm_analyzer
+    if analyzer is None:
+        raise HTTPException(
+            status_code=503,
+            detail="LM analyzer unavailable — check middleware logs.",
+        )
+    pairs = [(item.title, item.description) for item in req.items]
     results: list = await asyncio.to_thread(analyzer.analyze_text_batch, pairs)
     return {
         "results": {

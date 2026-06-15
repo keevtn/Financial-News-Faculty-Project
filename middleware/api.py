@@ -27,7 +27,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from middleware.limiter import limiter
-from middleware.routes import news, sentiment
+from middleware.routes import news, sentiment, agent, tickers
 
 log = logging.getLogger("middleware")
 
@@ -51,7 +51,16 @@ for _p in (_project_root, _backend_dir):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load FinBERT and open the MongoDB connection once at startup."""
-    # FinBERT
+    # LM keyword scorer (zero deps, instant — used for social/unstructured items)
+    try:
+        from backend.sentiment import LoughranMcDonaldAnalyzer
+        app.state.lm_analyzer = LoughranMcDonaldAnalyzer()
+        log.info("LoughranMcDonald analyzer ready")
+    except Exception as exc:
+        log.error("Failed to load LM analyzer: %s", exc)
+        app.state.lm_analyzer = None
+
+    # FinBERT (used for structured items only)
     try:
         from backend.sentiment import FinBERTAnalyzer
         analyzer = FinBERTAnalyzer()
@@ -101,6 +110,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -108,6 +118,8 @@ app.add_middleware(
 
 app.include_router(news.router, prefix="/api/news", tags=["news"])
 app.include_router(sentiment.router, prefix="/api/sentiment", tags=["sentiment"])
+app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
+app.include_router(tickers.router, prefix="/api/tickers", tags=["tickers"])
 
 
 @app.get("/health", tags=["meta"])

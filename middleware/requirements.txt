@@ -1,8 +1,12 @@
 fastapi
 uvicorn[standard]
-transformers
-torch
 motor
 pymongo[srv]
 python-dotenv
 slowapi
+yfinance
+# FinBERT (optional — only needed for local high-accuracy scoring)
+# Uncomment both lines if torch is available; middleware auto-falls back to
+# Loughran-McDonald when these are absent (works fine on free hosting tiers).
+# transformers
+# torch

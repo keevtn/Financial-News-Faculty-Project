@@ -1035,7 +1035,11 @@ class IngestionAgent:
         """Drain the shared queue, apply keyword filter, classify topic, and fan-out to handlers."""
         while True:
             item = await self._queue.get()
-            if self._filter.accepts(item):
+            # SEC and FDA items are inherently financial — skip keyword gating so
+            # no filing or enforcement notice is silently dropped just because
+            # "Apple" or "Pfizer" don't appear in FILTER_KEYWORDS.
+            is_regulatory = item.source_type in ("sec", "fda")
+            if is_regulatory or self._filter.accepts(item):
                 item = replace(
                     item,
                     topic=self._classifier.classify(item),
