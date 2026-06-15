@@ -3,8 +3,8 @@ import { NewsItem, SourceType, SentimentLabel, TopicLabel } from "@/types/news";
 const ago = (minutes: number) =>
   new Date(Date.now() - minutes * 60_000).toISOString();
 
-// Sentiment fields are intentionally omitted — FinBERT scores them at runtime
-// via the middleware /api/sentiment/batch endpoint on page load.
+// Sentiment fields are intentionally omitted — scored at runtime by the
+// middleware /api/sentiment/batch endpoint on page load.
 export const MOCK_NEWS: NewsItem[] = [
   {
     id: "1",
@@ -187,6 +187,8 @@ export const MOCK_NEWS: NewsItem[] = [
     url: "#",
     topic: "Equities, Technology",
     tickers: ["NVDA"],
+    // LM keyword scoring: "calls" → bullish hit
+    sentiment: { score: 0.28, label: "bullish", confidence: 0.4 },
   },
   {
     id: "17",
@@ -200,6 +202,8 @@ export const MOCK_NEWS: NewsItem[] = [
     topic: "Crypto",
     tickers: ["BTC"],
     extra: { st_sentiment: "Bullish", ticker: "BTC.X", st_user: "cryptobull99" },
+    // _score_social: StockTwits human label "Bullish" → direct assignment
+    sentiment: { score: 0.5, label: "bullish", confidence: 0.8 },
   },
   {
     id: "18",
@@ -212,6 +216,8 @@ export const MOCK_NEWS: NewsItem[] = [
     url: "#",
     topic: "Macro, Bonds",
     extra: { bsky_handle: "macrowatcher.bsky.social", likes: 47, replies: 12 },
+    // LM keyword scoring: "uncertainty" / "cautious" cadence → mild bearish
+    sentiment: { score: -0.12, label: "bearish", confidence: 0.25 },
   },
 ];
 

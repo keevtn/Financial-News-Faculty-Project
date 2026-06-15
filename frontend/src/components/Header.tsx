@@ -17,7 +17,7 @@ export default function Header({ itemCount, scoringPending }: HeaderProps) {
         {scoringPending && (
           <span className="flex items-center gap-1.5 text-[10px] text-slate-500 ml-2">
             <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
-            Scoring with FinBERT…
+            Scoring sentiment…
           </span>
         )}
       </div>

@@ -56,7 +56,8 @@ export async function fetchTickerPrices(
 }
 
 /**
- * Score a batch of structured items with FinBERT via the middleware.
+ * Score a batch of structured items via the middleware (FinBERT if available,
+ * otherwise the Loughran-McDonald keyword scorer).
  * Returns a map of item id → SentimentResult, or an empty object if the
  * API is unavailable (e.g. middleware not running).
  */

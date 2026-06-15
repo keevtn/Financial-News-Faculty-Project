@@ -56,7 +56,7 @@ export default function HomePage() {
     [items]
   );
 
-  // Fetch news from MongoDB (falls back to mock), then score unscored items with FinBERT.
+  // Fetch news from MongoDB (falls back to mock), then score any unscored items.
   // Re-runs when committed limit changes.
   useEffect(() => {
     let cancelled = false;
@@ -66,11 +66,11 @@ export default function HomePage() {
       if (cancelled) return;
       setItems(fetched);
 
-      // Run structured (FinBERT) and social (LM) scoring in parallel so
-      // FinBERT latency doesn't block social sentiment from appearing.
+      // Run structured and social scoring in parallel so structured-scoring
+      // latency doesn't block social sentiment from appearing.
       await Promise.all([
 
-        // ── Structured: FinBERT (slow, high-accuracy) ────────────────────────
+        // ── Structured: middleware scorer (FinBERT if available, else LM) ────
         (async () => {
           const unscored = fetched.filter((i) => !i.sentiment && i.source_type !== "social");
           if (unscored.length > 0) {

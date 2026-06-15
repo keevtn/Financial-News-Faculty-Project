@@ -31,7 +31,7 @@ export default function NewsCard({ item, scoringPending }: NewsCardProps) {
         {item.sentiment ? (
           <SentimentBadge result={item.sentiment} />
         ) : scoringPending ? (
-          // Skeleton placeholder while FinBERT is scoring
+          // Skeleton placeholder while sentiment is scoring
           <span className="h-5 w-16 rounded bg-slate-700/50 animate-pulse inline-block" />
         ) : null}
       </div>
