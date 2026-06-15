@@ -160,7 +160,7 @@ export default function HomePage() {
         counts.set(t, (counts.get(t) ?? 0) + 1);
       }
     }
-    return [...counts.entries()]
+    return Array.from(counts.entries())
       .sort((a, b) => b[1] - a[1])
       .map(([t]) => t);
   }, [items]);
