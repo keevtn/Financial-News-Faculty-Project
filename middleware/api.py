@@ -27,7 +27,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from middleware.limiter import limiter
-from middleware.routes import news, sentiment, agent, tickers
+from middleware.routes import news, sentiment, agent, tickers, catalyst
 
 log = logging.getLogger("middleware")
 
@@ -80,15 +80,18 @@ async def lifespan(app: FastAPI):
             client = AsyncIOMotorClient(mongo_uri, tz_aware=True)
             app.state.mongo_client = client
             app.state.news_collection = client["financial_news"]["news_items"]
+            app.state.rankings_collection = client["financial_news"]["catalyst_rankings"]
             log.info("MongoDB connected")
         except Exception as exc:
             log.error("Failed to connect to MongoDB: %s", exc)
             app.state.mongo_client = None
             app.state.news_collection = None
+            app.state.rankings_collection = None
     else:
         log.warning("MONGODB_URI not set — /api/news will return empty results")
         app.state.mongo_client = None
         app.state.news_collection = None
+        app.state.rankings_collection = None
 
     # In-process ingestion (only when RUN_INGESTION=true — see ingestion_runner).
     # Keeps the feeds fresh on the hosted deployment without a separate worker.
@@ -134,6 +137,7 @@ app.include_router(news.router, prefix="/api/news", tags=["news"])
 app.include_router(sentiment.router, prefix="/api/sentiment", tags=["sentiment"])
 app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
 app.include_router(tickers.router, prefix="/api/tickers", tags=["tickers"])
+app.include_router(catalyst.router, prefix="/api/catalyst", tags=["catalyst"])
 
 
 @app.get("/health", tags=["meta"])

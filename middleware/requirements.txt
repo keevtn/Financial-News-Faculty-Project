@@ -9,6 +9,10 @@ yfinance
 aiohttp
 feedparser
 python-dateutil
+# Anthropic SDK — powers the catalyst ranker's LLM deep-read and the agent route.
+# Optional at runtime: the ranker auto-falls back to its quantitative pre-score
+# when this package (or ANTHROPIC_API_KEY) is absent.
+anthropic
 # FinBERT (optional — only needed for local high-accuracy scoring)
 # Uncomment both lines if torch is available; middleware auto-falls back to
 # Loughran-McDonald when these are absent (works fine on free hosting tiers).
