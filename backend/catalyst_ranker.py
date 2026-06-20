@@ -49,7 +49,9 @@ from market_calendar import next_session_bounds, overnight_window
 
 log = logging.getLogger("catalyst_ranker")
 
-MODEL = "claude-opus-4-8"
+# Override with the CATALYST_MODEL env var to trade cost vs quality
+# (e.g. claude-sonnet-4-6 or claude-haiku-4-5 are much cheaper than Opus).
+MODEL = os.environ.get("CATALYST_MODEL", "claude-opus-4-8")
 
 # --- Tunables -------------------------------------------------------------- #
 
@@ -455,30 +457,40 @@ def _build_llm_prompt(candidates: list[CandidateFeatures]) -> str:
     )
 
 
-async def _run_llm(candidates: list[CandidateFeatures]) -> tuple[Optional[dict[str, Any]], Optional[str], Optional[str]]:
+async def _run_llm(
+    candidates: list[CandidateFeatures],
+) -> tuple[Optional[dict[str, Any]], Optional[str], Optional[str], Optional[str]]:
     """
-    Score the shortlist with one temperature-0 tool-use call.
+    Score the shortlist with one forced tool-use call.
 
-    Returns (parsed_by_ticker, prompt, raw_json). Any failure returns
-    (None, prompt, None) so the caller falls back to the quantitative pre-score.
+    Returns (parsed_by_ticker, prompt, raw_json, status). On success status is
+    None; on any fallback it is a short human-readable reason (surfaced on the
+    run as ``llm_status``) so you can tell *why* the LLM didn't run without
+    digging through server logs. The caller falls back to the quantitative
+    pre-score whenever parsed_by_ticker is None.
+
+    Note: no sampling params (temperature/top_p/top_k) — those are rejected with
+    a 400 on Opus 4.7/4.8. Reproducibility comes from persisting the prompt +
+    raw output, not from a fixed temperature.
     """
     prompt = _build_llm_prompt(candidates)
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        log.info("ANTHROPIC_API_KEY not set — using quantitative pre-score only")
-        return None, prompt, None
+        msg = "ANTHROPIC_API_KEY not set"
+        log.info("%s — using quantitative pre-score only", msg)
+        return None, prompt, None, msg
     try:
         import anthropic
     except ImportError:
-        log.warning("anthropic not installed — using quantitative pre-score only")
-        return None, prompt, None
+        msg = "anthropic package not installed"
+        log.warning("%s — using quantitative pre-score only", msg)
+        return None, prompt, None, msg
 
     try:
         client = anthropic.AsyncAnthropic(api_key=api_key)
         resp = await client.messages.create(
             model=MODEL,
             max_tokens=4096,
-            temperature=0,
             system=_RUBRIC,
             tools=[_SUBMIT_TOOL],
             tool_choice={"type": "tool", "name": "submit_rankings"},
@@ -488,12 +500,14 @@ async def _run_llm(candidates: list[CandidateFeatures]) -> tuple[Optional[dict[s
             if block.type == "tool_use" and block.name == "submit_rankings":
                 rankings = block.input.get("rankings", [])
                 by_ticker = {r["ticker"]: r for r in rankings if r.get("ticker")}
-                return by_ticker, prompt, json.dumps(block.input)
-        log.warning("LLM returned no submit_rankings tool call")
-        return None, prompt, None
+                return by_ticker, prompt, json.dumps(block.input), None
+        msg = "model returned no submit_rankings tool call"
+        log.warning(msg)
+        return None, prompt, None, msg
     except Exception as exc:  # noqa: BLE001
-        log.error("LLM catalyst scoring failed: %s", exc)
-        return None, prompt, None
+        msg = f"LLM call failed: {type(exc).__name__}: {exc}"[:300]
+        log.error(msg)
+        return None, prompt, None, msg
 
 
 # --- Orchestrator ---------------------------------------------------------- #
@@ -529,9 +543,11 @@ async def rank_catalysts(
     shortlist = ranked[:top_k]
 
     llm_by_ticker: Optional[dict[str, Any]] = None
-    prompt = raw_llm = None
+    prompt = raw_llm = llm_status = None
     if use_llm and shortlist:
-        llm_by_ticker, prompt, raw_llm = await _run_llm(shortlist)
+        llm_by_ticker, prompt, raw_llm, llm_status = await _run_llm(shortlist)
+    elif not use_llm:
+        llm_status = "use_llm=false (quantitative-only run requested)"
 
     items: list[dict[str, Any]] = []
     for c in shortlist:
@@ -591,6 +607,7 @@ async def rank_catalysts(
         "window_end": end,
         "model": MODEL if used_llm else None,
         "used_llm": used_llm,
+        "llm_status": llm_status,  # None on success; reason string on fallback
         "params": {
             "top_k": top_k,
             "min_sources": min_sources,
