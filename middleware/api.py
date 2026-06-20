@@ -26,6 +26,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+# Put the project root and backend/ on sys.path BEFORE importing the route
+# modules. catalyst.py imports catalyst_ranker / market_calendar from backend/
+# at module load, so the path must be ready first — regardless of the directory
+# uvicorn is launched from (e.g. Render runs `uvicorn middleware.api:app`).
+_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_backend_dir = os.path.join(_project_root, "backend")
+for _p in (_project_root, _backend_dir):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
 from middleware.limiter import limiter
 from middleware.routes import news, sentiment, agent, tickers, catalyst
 
@@ -38,14 +48,6 @@ try:
     load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
 except ImportError:
     pass
-
-# Ensure both the project root and backend/ are on sys.path regardless of
-# where uvicorn is launched from.
-_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_backend_dir = os.path.join(_project_root, "backend")
-for _p in (_project_root, _backend_dir):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
 
 
 @asynccontextmanager
