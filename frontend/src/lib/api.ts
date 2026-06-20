@@ -100,3 +100,72 @@ export async function scoreSocialSentimentBatch(
     return {};
   }
 }
+
+// ---------------------------------------------------------------------------
+// Catalyst ranking — pre-market ranked tickers (read-only; generated server-side)
+// ---------------------------------------------------------------------------
+
+export type Direction = "bullish" | "bearish" | "neutral";
+
+export interface CatalystArticle {
+  source: string;
+  source_type: string;
+  title: string;
+  description: string;
+  url: string;
+  published_at: string;
+  reprints: number;
+}
+
+export interface CatalystItem {
+  rank: number;
+  ticker: string;
+  catalyst_score: number;
+  direction: Direction;
+  confidence: number;
+  rationale: string;
+  n_docs: number;
+  n_stories: number;
+  n_sources: number;
+  source_types: string[];
+  mean_sentiment: number;
+  abnormal_attention: number;
+  pre_score: number;
+  sample_articles: CatalystArticle[];
+  llm_subscores: {
+    materiality: number | null;
+    surprise: number | null;
+    sentiment_strength: number | null;
+    breadth: number | null;
+  } | null;
+}
+
+export interface CatalystRanking {
+  run_id: string;
+  generated_at: string;
+  window_start: string;
+  window_end: string;
+  model: string | null;
+  used_llm: boolean;
+  llm_status: string | null;
+  params: { top_k: number; min_sources: number; baseline_days: number };
+  candidate_count: number;
+  doc_count: number;
+  items: CatalystItem[];
+}
+
+/**
+ * Fetch the most recent persisted catalyst ranking, or null if none exists yet
+ * or the API is unreachable. Generation happens server-side (POST /api/catalyst/run,
+ * which is key-protected) — this endpoint is a public read.
+ */
+export async function fetchLatestCatalystRanking(): Promise<CatalystRanking | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/catalyst/latest`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return (data.ranking ?? null) as CatalystRanking | null;
+  } catch {
+    return null;
+  }
+}
