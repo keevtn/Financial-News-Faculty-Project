@@ -130,6 +130,8 @@ export interface CatalystItem {
   source_types: string[];
   mean_sentiment: number;
   abnormal_attention: number;
+  market_cap: number | null;
+  size_factor: number;
   pre_score: number;
   sample_articles: CatalystArticle[];
   llm_subscores: {
@@ -167,5 +169,66 @@ export async function fetchLatestCatalystRanking(): Promise<CatalystRanking | nu
     return (data.ranking ?? null) as CatalystRanking | null;
   } catch {
     return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Numeric screener — market-wide movers from Finviz (read-only)
+// ---------------------------------------------------------------------------
+
+export interface ScreenerRow {
+  ticker: string;
+  company: string;
+  sector: string;
+  industry: string;
+  country: string;
+  market_cap: number | null;
+  pe: number | null;
+  price: number | null;
+  change_pct: number | null;
+  volume: number | null;
+}
+
+export interface ScreenerResult {
+  rows: ScreenerRow[];
+  count: number;
+  preset: string;
+  status: string | null;     // non-null only when Finviz was unreachable/unparseable
+  cached: boolean;
+  fetched_at?: number;
+}
+
+export interface ScreenerPreset {
+  id: string;
+  label: string;
+}
+
+/** List the available screen presets (Top Gainers, Most Active, …). */
+export async function fetchScreenerPresets(): Promise<ScreenerPreset[]> {
+  try {
+    const res = await fetch(`${API_BASE}/api/screener/presets`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.presets ?? []) as ScreenerPreset[];
+  } catch {
+    return [];
+  }
+}
+
+/** Run a screen; returns an empty result (with a status reason) on failure. */
+export async function fetchScreener(
+  preset = "top_gainers",
+  limit = 30,
+): Promise<ScreenerResult> {
+  const empty: ScreenerResult = {
+    rows: [], count: 0, preset, status: "request failed", cached: false,
+  };
+  try {
+    const params = new URLSearchParams({ preset, limit: String(limit) });
+    const res = await fetch(`${API_BASE}/api/screener?${params}`);
+    if (!res.ok) return { ...empty, status: `HTTP ${res.status}` };
+    return (await res.json()) as ScreenerResult;
+  } catch {
+    return empty;
   }
 }

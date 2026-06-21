@@ -11,6 +11,7 @@ import StatsBar from "@/components/StatsBar";
 import TabNav, { TabId } from "@/components/TabNav";
 import UnstructuredView from "@/components/UnstructuredView";
 import CatalystView from "@/components/CatalystView";
+import ScreenerView from "@/components/ScreenerView";
 import TickerTape from "@/components/TickerTape";
 
 const DEFAULT_FILTERS: FilterState = {
@@ -295,8 +296,10 @@ export default function HomePage() {
           tickerCounts={socialTickerCounts}
           scoringPending={socialScoringPending}
         />
-      ) : (
+      ) : activeTab === "catalysts" ? (
         <CatalystView />
+      ) : (
+        <ScreenerView />
       )}
     </div>
   );

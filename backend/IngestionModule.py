@@ -406,6 +406,18 @@ DEFAULT_RSS_FEEDS: list[dict[str, str]] = [
         "label": "Benzinga",
         "url": "https://www.benzinga.com/feed",
     },
+    {
+        "label": "GlobeNewswire",
+        "url": (
+            "https://www.globenewswire.com/RssFeed/orgclass/1/"
+            "feedTitle/GlobeNewswire%20-%20News%20about%20Public%20Companies"
+        ),
+    },
+    # NOTE: ACCESSWIRE / ACCESS Newswire is intentionally NOT listed. Their site
+    # (accesswire.com / accessnewswire.com) sits behind a Cloudflare bot
+    # challenge that returns HTTP 403 "Just a moment..." to any server-side
+    # fetch, so it cannot be ingested via a plain RSS poll. Re-add here if a
+    # licensed/API feed URL becomes available.
     # ── Reddit social feeds (unauthenticated public RSS, /new for recency) ──
     # source_type="social" routes these to the Unstructured tab in the frontend.
     {

@@ -27,6 +27,14 @@ const SOURCE_TYPE_CHIP: Record<string, string> = {
   social: "bg-violet-500/10 text-violet-400 border-violet-900",
 };
 
+function fmtMarketCap(n: number | null): string {
+  if (n == null) return "—";
+  if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(0)}M`;
+  return `$${n}`;
+}
+
 function shortDateTime(iso: string): string {
   try {
     return new Date(iso).toLocaleString(undefined, {
@@ -117,6 +125,14 @@ function CatalystCard({ item }: { item: CatalystItem }) {
             <span className="text-slate-500">
               <span className="font-mono text-slate-300">{item.abnormal_attention}×</span> normal attention
             </span>
+            {item.market_cap != null && (
+              <>
+                <span className="text-slate-700">·</span>
+                <span className="text-slate-500">
+                  <span className="font-mono text-slate-300">{fmtMarketCap(item.market_cap)}</span> mkt cap
+                </span>
+              </>
+            )}
             <span className="flex gap-1 ml-1">
               {item.source_types.map((st) => (
                 <span

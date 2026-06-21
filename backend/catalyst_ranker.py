@@ -77,6 +77,31 @@ _ATTENTION_SAT = 8.0     # n_stories at which the attention component maxes out
 _ABNORMAL_SAT = 3.0      # 3x trailing baseline -> max abnormal component
 _MIN_BASELINE = 0.25     # floor so a zero baseline doesn't divide by zero
 
+# Market-cap "size factor": a multiplier on the composite pre-score that
+# down-weights mega-cap names (they dominate raw news volume yet rarely move
+# much on a single headline) and modestly favours genuine small/mid-cap
+# catalysts — WITHOUT rewarding micro-cap penny-stock noise. Complements the
+# abnormal-attention term, which already fights "always in the news" bias.
+# Thresholds are USD market cap; first threshold met wins; unknown cap -> 1.0.
+_SIZE_TIERS: list[tuple[float, float]] = [
+    (200e9, 0.82),   # mega-cap   (>$200B)
+    (50e9,  0.90),   # very large ($50B–$200B)
+    (10e9,  0.96),   # large      ($10B–$50B)
+    (2e9,   1.00),   # mid        ($2B–$10B)   — neutral baseline
+    (300e6, 1.10),   # small      ($300M–$2B)  — sweet spot for material catalysts
+    (0.0,   1.00),   # micro/nano (<$300M)     — neutral, don't reward pump noise
+]
+
+
+def _size_factor(market_cap: Optional[float]) -> float:
+    """Size multiplier for the pre-score; 1.0 when the cap is unknown."""
+    if market_cap is None:
+        return 1.0
+    for threshold, factor in _SIZE_TIERS:
+        if market_cap >= threshold:
+            return factor
+    return 1.0
+
 _STOPWORDS: frozenset[str] = frozenset({
     "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "with",
     "at", "by", "from", "as", "is", "are", "be", "after", "amid", "over",
@@ -100,6 +125,8 @@ class CandidateFeatures:
     abnormal_attention: float = 1.0  # today's mentions / trailing daily baseline
     best_source_weight: float = 1.0  # max SOURCE_TYPE_WEIGHT seen
     credibility: float = 1.0         # max per-source credibility seen
+    market_cap: Optional[float] = None  # USD market cap (Finviz); None if unknown
+    size_factor: float = 1.0         # size multiplier applied to the pre-score
     pre_score: float = 0.0           # composite, 0..100
     components: dict[str, float] = field(default_factory=dict)
     sample_articles: list[dict[str, Any]] = field(default_factory=list)
@@ -272,6 +299,7 @@ def score_candidates(
     *,
     min_sources: int = 2,
     weights: Optional[dict[str, float]] = None,
+    market_caps: Optional[dict[str, float]] = None,
 ) -> list[CandidateFeatures]:
     """
     Apply the volume floor and compute the transparent composite pre-score.
@@ -284,11 +312,14 @@ def score_candidates(
       sentiment   — magnitude of aggregate sentiment (direction-agnostic)
       materiality — best source-type weight (SEC/FDA > RSS)
 
-    then multiplied by a per-source credibility factor.
+    then multiplied by a per-source credibility factor and a market-cap size
+    factor (``market_caps`` maps ticker -> USD market cap; absent/None -> 1.0,
+    so omitting it preserves the original size-neutral behaviour).
     """
     w = {"attention": 0.30, "abnormal": 0.25, "sentiment": 0.25, "materiality": 0.20}
     if weights:
         w.update(weights)
+    caps = market_caps or {}
 
     qualified = [c for c in candidates if c.n_sources >= min_sources]
     for c in qualified:
@@ -298,12 +329,16 @@ def score_candidates(
         materiality = min(1.0, c.best_source_weight / max(SOURCE_TYPE_WEIGHT.values()))
         credibility_factor = min(1.2, c.credibility)
 
+        c.market_cap = caps.get(c.ticker)
+        size_factor = _size_factor(c.market_cap)
+        c.size_factor = size_factor
+
         composite = (
             w["attention"] * attention
             + w["abnormal"] * abnormal
             + w["sentiment"] * sentiment
             + w["materiality"] * materiality
-        ) * credibility_factor
+        ) * credibility_factor * size_factor
 
         c.components = {
             "attention": round(attention, 4),
@@ -311,6 +346,7 @@ def score_candidates(
             "sentiment": round(sentiment, 4),
             "materiality": round(materiality, 4),
             "credibility_factor": round(credibility_factor, 4),
+            "size_factor": round(size_factor, 4),
         }
         c.pre_score = round(100.0 * composite, 2)
 
@@ -399,6 +435,10 @@ Then give:
   - confidence: 0.0-1.0 in your own assessment given the evidence
   - rationale: ONE sentence, specific, citing the actual development.
 
+Weigh materiality RELATIVE TO COMPANY SIZE: the same development moves a small-
+or mid-cap far more than a mega-cap, so a genuine catalyst at a smaller company
+should outrank routine news at a giant. Each ticker's market cap is provided.
+
 Rank by catalyst_score. Be skeptical: thin or purely promotional coverage
 should score low even if there is a lot of it."""
 
@@ -439,8 +479,13 @@ def _build_llm_prompt(candidates: list[CandidateFeatures]) -> str:
     """Render the shortlist + their representative articles as the user turn."""
     blocks: list[str] = []
     for c in candidates:
+        cap = c.market_cap
+        cap_str = (
+            f"${cap / 1e9:.1f}B" if cap and cap >= 1e9
+            else f"${cap / 1e6:.0f}M" if cap else "n/a"
+        )
         lines = [
-            f"### {c.ticker}",
+            f"### {c.ticker}  (market cap {cap_str})",
             f"(independent stories={c.n_stories}, distinct sources={c.n_sources}, "
             f"abnormal_attention={c.abnormal_attention}x, source_types={','.join(c.source_types)})",
         ]
@@ -512,6 +557,20 @@ async def _run_llm(
 
 # --- Orchestrator ---------------------------------------------------------- #
 
+async def _fetch_market_caps_safe(tickers: list[str]) -> dict[str, float]:
+    """Fetch market caps via the Finviz screener; never raises (-> {} on any error)."""
+    if not tickers:
+        return {}
+    try:
+        from finviz_screener import fetch_market_caps
+        caps = await fetch_market_caps(tickers)
+        log.info("market caps resolved: %d/%d tickers", len(caps), len(tickers))
+        return caps
+    except Exception as exc:  # noqa: BLE001
+        log.warning("market-cap fetch failed (%s) — size-neutral scoring", exc)
+        return {}
+
+
 async def rank_catalysts(
     collection: Any,
     *,
@@ -539,7 +598,12 @@ async def rank_catalysts(
             ticker_extractor = None
 
     candidates = build_candidates(docs, baseline, ticker_extractor=ticker_extractor)
-    ranked = score_candidates(candidates, min_sources=min_sources)
+    # Size-adjust scoring with market caps (Finviz). Fetch only for the
+    # volume-qualified tickers to keep the lookup small; degrade to size-neutral
+    # scoring if the screener is unreachable.
+    qualified_tickers = [c.ticker for c in candidates if c.n_sources >= min_sources]
+    market_caps = await _fetch_market_caps_safe(qualified_tickers)
+    ranked = score_candidates(candidates, min_sources=min_sources, market_caps=market_caps)
     shortlist = ranked[:top_k]
 
     llm_by_ticker: Optional[dict[str, Any]] = None
@@ -559,6 +623,8 @@ async def rank_catalysts(
             "source_types": c.source_types,
             "mean_sentiment": c.mean_sentiment,
             "abnormal_attention": c.abnormal_attention,
+            "market_cap": c.market_cap,
+            "size_factor": c.size_factor,
             "pre_score": c.pre_score,
             "components": c.components,
             "sample_articles": c.sample_articles,

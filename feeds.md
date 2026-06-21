@@ -1,0 +1,150 @@
+# Feed Sources
+
+All sources ingested by this project, grouped by pipeline and access method.
+Reddit is consumed via RSS (no credentials). StockTwits and Bluesky are consumed
+via their respective public APIs (no credentials).
+
+---
+
+## Structured Sources
+
+Polled by `backend/IngestionModule.py` → `RSSExtractor`, `SECExtractor`, `FDAExtractor`.
+
+### RSS / Atom Newswires
+
+| Label | URL | Topic Focus |
+|---|---|---|
+| Bloomberg Markets | https://feeds.bloomberg.com/markets/news.rss | Equities, Macro |
+| Financial Times | https://www.ft.com/rss/home | Equities, Macro, Bonds |
+| Wall Street Journal Markets | https://feeds.a.dj.com/rss/RSSMarketsMain.xml | Equities, Macro |
+| CNBC Top News | https://www.cnbc.com/id/100003114/device/rss/rss.html | Equities, Macro |
+| MarketWatch Top Stories | https://feeds.marketwatch.com/marketwatch/topstories/ | Equities |
+| Seeking Alpha Market News | https://seekingalpha.com/market_currents.xml | Equities, Analysis |
+| Federal Reserve Press Releases | https://www.federalreserve.gov/feeds/press_all.xml | Macro, Bonds |
+| BLS Economic News | https://www.bls.gov/feed/bls_latest.rss | Macro |
+| CoinDesk | https://www.coindesk.com/arc/outboundfeeds/rss/ | Crypto |
+| Cointelegraph | https://cointelegraph.com/rss | Crypto |
+| Yahoo Finance | https://finance.yahoo.com/rss/topfinstories | Equities |
+| PR Newswire | https://www.prnewswire.com/rss/news-releases-list.rss | All |
+| Business Wire | https://feed.businesswire.com/rss/home/?rss=G1&rssid=1 | All |
+| Benzinga | https://www.benzinga.com/feed | Equities, Analysis |
+| GlobeNewswire (Public Companies) | https://www.globenewswire.com/RssFeed/orgclass/1/... | Press Releases, Small/Mid-cap |
+
+> **ACCESSWIRE / ACCESS Newswire — not ingestable.** Their domains sit behind a
+> Cloudflare bot challenge that returns `403 "Just a moment..."` to any
+> server-side fetch, so a plain RSS poll cannot reach them. Excluded until a
+> licensed/API feed becomes available.
+
+### SEC EDGAR
+
+Polled via the EDGAR full-text search API. No RSS feed; custom JSON extractor.
+
+| Filing Type | Description |
+|---|---|
+| 8-K | Current reports (material events, earnings releases) |
+| 10-K | Annual reports |
+| 10-Q | Quarterly reports |
+| S-1 | IPO registration statements |
+| 6-K | Foreign private issuer reports |
+
+### FDA
+
+Polled via the openFDA REST API. No RSS feed; custom JSON extractor.
+
+| Endpoint | Description |
+|---|---|
+| Press releases | FDA news and announcements |
+| Enforcement reports | Recalls and enforcement actions |
+| Drug adverse events | Serious adverse event reports (FAERS) |
+
+---
+
+## Unstructured Sources
+
+### Reddit — Subreddits (RSS)
+
+Consumed via Reddit's public unauthenticated Atom feed (`/new/.rss`).
+No credentials required. Polled by `RSSExtractor` alongside newswires.
+Rate limit: ~30 requests per 10 minutes per IP.
+
+| Subreddit | URL | Strength |
+|---|---|---|
+| r/wallstreetbets | https://www.reddit.com/r/wallstreetbets/new/.rss | Retail sentiment, options, meme stocks |
+| r/investing | https://www.reddit.com/r/investing/new/.rss | Long-term fundamentals, diverse coverage |
+| r/stocks | https://www.reddit.com/r/stocks/new/.rss | General equities discussion |
+| r/SecurityAnalysis | https://www.reddit.com/r/SecurityAnalysis/new/.rss | Deep fundamental analysis, high quality |
+| r/economics | https://www.reddit.com/r/economics/new/.rss | Macro, academic papers, policy |
+| r/econmonitor | https://www.reddit.com/r/econmonitor/new/.rss | Economic data releases (CPI, GDP, jobs) |
+| r/StockMarket | https://www.reddit.com/r/StockMarket/new/.rss | General market discussion |
+| r/options | https://www.reddit.com/r/options/new/.rss | Derivatives, volatility, flow |
+| r/algotrading | https://www.reddit.com/r/algotrading/new/.rss | Systematic strategies, signals |
+| r/CryptoCurrency | https://www.reddit.com/r/CryptoCurrency/new/.rss | Broad crypto market |
+| r/Bitcoin | https://www.reddit.com/r/Bitcoin/new/.rss | Bitcoin-specific news and discussion |
+
+---
+
+### StockTwits — Ticker Watchlist
+
+Consumed via the public unauthenticated symbol stream endpoint:
+`https://api.stocktwits.com/api/2/streams/symbol/{TICKER}.json`
+
+No credentials required. Rate limit: 200 requests per hour.
+
+> **Cloudflare note:** StockTwits fronts this API with Cloudflare, which blocks
+> `aiohttp`/`requests` by TLS fingerprint (403 HTML, even with browser headers).
+> The extractor uses **`curl_cffi`** (`impersonate="chrome"`) to present a real
+> browser TLS handshake. If `curl_cffi` is absent, StockTwits ingestion disables
+> itself gracefully and the other sources keep running.
+Crypto tickers use StockTwits' `.X` suffix convention.
+Defined in `IngestionModule.py` → `STOCKTWITS_WATCHLIST`.
+
+| Category | Tickers |
+|---|---|
+| Broad market ETFs | SPY, QQQ, DIA |
+| Mega-cap equities | AAPL, MSFT, GOOGL, AMZN, NVDA, META, TSLA |
+| Financials | JPM, BAC |
+| Energy | XOM, CVX |
+| Technology / Semiconductors | AMD, INTC |
+| Bonds / Macro proxies | TLT, GLD |
+| Crypto | BTC.X, ETH.X |
+| High-sentiment / retail | GME, AMC, PLTR |
+
+> StockTwits users self-tag messages as bullish or bearish — this provides
+> human-labeled sentiment alongside our FinBERT scores.
+
+---
+
+### Bluesky — Keyword / Hashtag Search
+
+Consumed via the AT Protocol AppView API (no credentials):
+`https://api.bsky.app`
+
+No API key required. Searches run via `app.bsky.feed.searchPosts`.
+
+> **Endpoint note:** as of mid-2026 the *public* AppView host
+> (`public.api.bsky.app`) returns `403` for `searchPosts` (an anti-scraping
+> change), while the main AppView host `api.bsky.app` still serves the same
+> search unauthenticated. The extractor points at `api.bsky.app`.
+Defined in `IngestionModule.py` → `BLUESKY_SEARCH_TERMS`.
+
+| Category | Terms |
+|---|---|
+| Equities & market | #stocks, #investing, #stockmarket, #wallstreetbets, #earnings, #trading, #options, #ipo, #merger |
+| Macro | #economy, #inflation, #federalreserve, #gdp, #cpi |
+| Crypto | #crypto, #bitcoin, #ethereum, #defi |
+| Commodities / Energy | #gold, #oil, #commodities |
+| Bonds | #bonds, #treasury |
+| Tech / Sector | #fintech, #semiconductor, #ai |
+
+---
+
+## Summary
+
+| Source | Count | Credentials Required | Status |
+|---|---|---|---|
+| RSS Newswires | 15 feeds | None | Live |
+| SEC EDGAR | 5 filing types | None | Live |
+| FDA | 3 endpoints | None | Live |
+| Reddit (RSS) | 11 subreddits | None | Live |
+| StockTwits | 22 tickers | None (needs curl_cffi) | Live (RUN_SOCIAL) |
+| Bluesky | 27 search terms | None | Live (RUN_SOCIAL) |
