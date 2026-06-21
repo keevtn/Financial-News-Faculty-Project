@@ -180,12 +180,23 @@ class MongoHandler:
             }
 
         try:
-            # $setOnInsert => first write wins; re-seen items are left untouched.
-            await self._collection.update_one(
-                {"content_hash": doc["content_hash"]},
-                {"$setOnInsert": doc},
-                upsert=True,
-            )
+            if item.source_type == "social" and "sentiment" in doc:
+                # Social items: insert full doc on first seen, but always refresh
+                # sentiment — pre-existing docs may have been stored before scoring
+                # was added ($setOnInsert would leave them with no sentiment field).
+                base = {k: v for k, v in doc.items() if k != "sentiment"}
+                await self._collection.update_one(
+                    {"content_hash": doc["content_hash"]},
+                    {"$setOnInsert": base, "$set": {"sentiment": doc["sentiment"]}},
+                    upsert=True,
+                )
+            else:
+                # Structured items: first write wins; re-seen items left untouched.
+                await self._collection.update_one(
+                    {"content_hash": doc["content_hash"]},
+                    {"$setOnInsert": doc},
+                    upsert=True,
+                )
         except Exception as exc:  # noqa: BLE001
             log.error("MongoHandler write failed: %s", exc)
 

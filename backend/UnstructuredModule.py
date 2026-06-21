@@ -146,15 +146,15 @@ class StockTwitsExtractor:
         url = self._STREAM_URL.format(ticker=ticker)
         items: list[NewsItem] = []
         try:
-            async with session.get(url) as resp:
-                if resp.status == 429:
-                    log.warning("StockTwits rate-limited — backing off 60 s")
-                    await asyncio.sleep(60)
-                    return []
-                if resp.status != 200:
-                    log.debug("StockTwits [%s] HTTP %d", ticker, resp.status)
-                    return []
-                data: dict[str, Any] = await resp.json(content_type=None)
+            resp = await session.get(url)
+            if resp.status_code == 429:
+                log.warning("StockTwits rate-limited — backing off 60 s")
+                await asyncio.sleep(60)
+                return []
+            if resp.status_code != 200:
+                log.debug("StockTwits [%s] HTTP %d", ticker, resp.status_code)
+                return []
+            data: dict[str, Any] = resp.json()
 
             for msg in data.get("messages", []):
                 body: str = msg.get("body", "").strip()
@@ -162,18 +162,18 @@ class StockTwitsExtractor:
                     continue
 
                 msg_id = msg.get("id", "")
-                username: str = msg.get("user", {}).get("username", "unknown")
+                username: str = (msg.get("user") or {}).get("username", "unknown")
                 published_at = _parse_dt_str(msg.get("created_at"))
 
-                # Human-tagged sentiment — "Bullish", "Bearish", or None
-                st_sentiment = (
-                    msg.get("entities", {})
-                       .get("sentiment", {})
-                       .get("basic")
-                )
+                # StockTwits sends ``entities``/``sentiment`` as JSON null on many
+                # messages, so ``.get(k, {})`` returns None (the key exists) and
+                # chaining .get() crashes. Coalesce each level with ``or {}``.
+                entities = msg.get("entities") or {}
+                sentiment = entities.get("sentiment") or {}
+                st_sentiment = sentiment.get("basic")  # "Bullish" / "Bearish" / None
                 symbols = [
                     s["symbol"]
-                    for s in msg.get("entities", {}).get("symbols", [])
+                    for s in (entities.get("symbols") or [])
                     if s.get("symbol")
                 ]
 
@@ -201,12 +201,25 @@ class StockTwitsExtractor:
 
     async def run(self) -> None:
         self._running = True
+        # StockTwits sits behind Cloudflare, which blocks aiohttp/requests by TLS
+        # fingerprint (a plain aiohttp GET gets 403 HTML even with browser headers).
+        # curl_cffi impersonates a real Chrome TLS handshake — the same reason
+        # plain `curl` succeeds where aiohttp fails. Without it we can't reach
+        # StockTwits, so disable this one source gracefully (Bluesky still runs).
+        try:
+            from curl_cffi.requests import AsyncSession
+        except ImportError:
+            log.warning(
+                "curl_cffi not installed — StockTwits is Cloudflare-protected and "
+                "cannot be polled without it; StockTwits ingestion disabled. "
+                "Add `curl_cffi` to requirements to enable it."
+            )
+            return
         log.info(
-            "StockTwitsExtractor started — %d tickers, interval=%ss",
+            "StockTwitsExtractor started — %d tickers, interval=%ss (curl_cffi/chrome)",
             len(self.watchlist), self.poll_interval,
         )
-        timeout = aiohttp.ClientTimeout(total=15)
-        async with aiohttp.ClientSession(headers=_HEADERS, timeout=timeout) as session:
+        async with AsyncSession(impersonate="chrome", timeout=15) as session:
             while self._running:
                 loop_start = asyncio.get_running_loop().time()
                 total = 0
@@ -233,8 +246,15 @@ class BlueskyExtractor:
     Searches the Bluesky public AT Protocol API for financial posts matching
     BLUESKY_SEARCH_TERMS.
 
-    No API key, no registration, no cost.  Uses the public AppView endpoint
-    (public.api.bsky.app) that serves unauthenticated read requests.
+    No API key, no registration, no cost. Uses the AppView host ``api.bsky.app``
+    which serves ``searchPosts`` unauthenticated.
+
+    NOTE: as of mid-2026 the *public* AppView host (``public.api.bsky.app``)
+    started returning ``403 Forbidden`` for ``app.bsky.feed.searchPosts`` (an
+    anti-scraping change) while still serving other endpoints. The main AppView
+    host ``api.bsky.app`` continues to serve the same search unauthenticated, so
+    we point there. If that is ever locked down too, the extractor degrades
+    gracefully (non-200 → empty cycle, logged) — no crash.
 
     Each search term gets 25 results per cycle; a 2 s sleep between requests
     keeps traffic polite.  A 60 s back-off fires on HTTP 429.
@@ -247,7 +267,7 @@ class BlueskyExtractor:
       search_term   — which search term surfaced this post
     """
 
-    _SEARCH_URL = "https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts"
+    _SEARCH_URL = "https://api.bsky.app/xrpc/app.bsky.feed.searchPosts"
     _RESULTS_PER_TERM = 25  # max per request; API supports up to 100
 
     def __init__(

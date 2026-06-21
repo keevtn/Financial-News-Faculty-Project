@@ -64,16 +64,18 @@ async def list_news(
     search: Optional[str] = Query(default=None, description="Keyword search in title + description"),
     sec_limit: int = Query(default=25, ge=0, le=100, description="Guaranteed minimum SEC items regardless of recency"),
     fda_limit: int = Query(default=25, ge=0, le=100, description="Guaranteed minimum FDA items regardless of recency"),
+    social_limit: int = Query(default=50, ge=0, le=200, description="Guaranteed minimum social items regardless of recency"),
 ) -> dict[str, Any]:
     """
-    Return news items with guaranteed representation from low-volume regulatory
-    sources (SEC, FDA).
+    Return news items with guaranteed representation from sources that high-volume
+    RSS would otherwise crowd out of the recency window (SEC, FDA, and social).
 
     The `limit` parameter controls how many items are returned from the
     time-sorted main query (RSS + all types combined). On top of that,
-    `sec_limit` and `fda_limit` inject the latest N items from each regulatory
-    source that aren't already in the main result — ensuring they always appear
-    even when high-volume RSS/social feeds dominate the recency window.
+    `sec_limit`, `fda_limit`, and `social_limit` inject the latest N items from
+    each of those source types that aren't already in the main result — so SEC
+    filings, FDA notices, and social chatter (StockTwits / Bluesky / Reddit)
+    always appear even when the newest slots are dominated by newswire RSS.
 
     When an explicit `source_type` filter is provided, guaranteed-minimum fetches
     are skipped because the caller already knows what they want.
@@ -99,6 +101,7 @@ async def list_news(
     # If the caller already said source_type=rss, injecting SEC docs would be wrong.
     run_sec = not source_type and sec_limit > 0
     run_fda = not source_type and fda_limit > 0
+    run_social = not source_type and social_limit > 0
 
     # Run main query + guaranteed-type queries in parallel
     coros: list[Any] = [
@@ -113,6 +116,8 @@ async def list_news(
         coros.append(_fetch_guaranteed(collection, query, "sec", sec_limit))
     if run_fda:
         coros.append(_fetch_guaranteed(collection, query, "fda", fda_limit))
+    if run_social:
+        coros.append(_fetch_guaranteed(collection, query, "social", social_limit))
 
     results = await asyncio.gather(*coros)
     main_docs: list[dict[str, Any]] = results[0]
@@ -124,7 +129,9 @@ async def list_news(
     if run_sec:
         extra_docs.extend(results[idx]); idx += 1
     if run_fda:
-        extra_docs.extend(results[idx])
+        extra_docs.extend(results[idx]); idx += 1
+    if run_social:
+        extra_docs.extend(results[idx]); idx += 1
 
     if extra_docs:
         seen = {d.get("content_hash") for d in main_docs}

@@ -5,10 +5,14 @@ pymongo[srv]
 python-dotenv
 slowapi
 yfinance
-# Ingestion pipeline (in-process when RUN_INGESTION=true — see ingestion_runner.py)
+# Ingestion pipeline (in-process when RUN_INGESTION/RUN_SOCIAL=true — see ingestion_runner.py)
 aiohttp
 feedparser
 python-dateutil
+# StockTwits (RUN_SOCIAL) sits behind Cloudflare, which blocks aiohttp by TLS
+# fingerprint; curl_cffi impersonates a real Chrome handshake so it's reachable.
+# Optional: StockTwits ingestion disables itself gracefully if this is absent.
+curl_cffi
 # Anthropic SDK — powers the catalyst ranker's LLM deep-read and the agent route.
 # Optional at runtime: the ranker auto-falls back to its quantitative pre-score
 # when this package (or ANTHROPIC_API_KEY) is absent.
