@@ -6,8 +6,10 @@ import {
   CatalystRanking,
   CatalystTrackRecord,
   Direction,
+  TickerQuote,
   fetchCatalystTrackRecord,
   fetchLatestCatalystRanking,
+  fetchTickerQuotes,
 } from "@/lib/api";
 import { formatDistanceToNow } from "@/lib/time";
 
@@ -37,6 +39,14 @@ function fmtMarketCap(n: number | null): string {
   return `$${n}`;
 }
 
+function fmtVolume(n: number | null): string {
+  if (n == null) return "—";
+  if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  return String(n);
+}
+
 function shortDateTime(iso: string): string {
   try {
     return new Date(iso).toLocaleString(undefined, {
@@ -62,7 +72,7 @@ function SubscoreBar({ label, value }: { label: string; value: number | null }) 
   );
 }
 
-function CatalystCard({ item }: { item: CatalystItem }) {
+function CatalystCard({ item, quote }: { item: CatalystItem; quote?: TickerQuote }) {
   const [open, setOpen] = useState(false);
   const dir = DIR[item.direction];
   const score = Math.max(0, Math.min(100, item.catalyst_score));
@@ -105,6 +115,33 @@ function CatalystCard({ item }: { item: CatalystItem }) {
               </span>
             </div>
           </div>
+
+          {/* live quote (yfinance) */}
+          {quote && quote.price != null && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs -mt-1">
+              <span className="font-mono font-semibold text-slate-100">${quote.price.toFixed(2)}</span>
+              {quote.change_pct != null && (
+                <span
+                  className={`font-mono font-semibold ${
+                    quote.change_pct > 0 ? "text-emerald-400" : quote.change_pct < 0 ? "text-red-400" : "text-slate-400"
+                  }`}
+                >
+                  {quote.change_pct > 0 ? "▲" : quote.change_pct < 0 ? "▼" : "·"}{" "}
+                  {quote.change_pct > 0 ? "+" : ""}{quote.change_pct.toFixed(2)}%
+                </span>
+              )}
+              {quote.volume != null && (
+                <span className="text-slate-500">
+                  Vol <span className="font-mono text-slate-400">{fmtVolume(quote.volume)}</span>
+                </span>
+              )}
+              {quote.day_low != null && quote.day_high != null && (
+                <span className="text-slate-500 hidden sm:inline">
+                  Day <span className="font-mono text-slate-400">{quote.day_low.toFixed(2)}–{quote.day_high.toFixed(2)}</span>
+                </span>
+              )}
+            </div>
+          )}
 
           {/* score bar */}
           <div className="h-1.5 bg-[#1e2d4a] rounded-full overflow-hidden">
@@ -274,6 +311,7 @@ function TrackRecordPanel({ tr }: { tr: CatalystTrackRecord }) {
 export default function CatalystView() {
   const [ranking, setRanking] = useState<CatalystRanking | null>(null);
   const [trackRecord, setTrackRecord] = useState<CatalystTrackRecord | null>(null);
+  const [quotes, setQuotes] = useState<Record<string, TickerQuote>>({});
   const [loading, setLoading] = useState(true);
 
   async function load() {
@@ -285,6 +323,11 @@ export default function CatalystView() {
     setRanking(r);
     setTrackRecord(tr);
     setLoading(false);
+    // Live quotes for the ranked tickers (best-effort; cards render without them).
+    if (r?.items?.length) {
+      const q = await fetchTickerQuotes(r.items.map((i) => i.ticker));
+      setQuotes(q);
+    }
   }
 
   useEffect(() => {
@@ -357,7 +400,7 @@ export default function CatalystView() {
         ) : (
           <div className="flex flex-col gap-3 max-w-3xl mx-auto">
             {ranking.items.map((item) => (
-              <CatalystCard key={item.ticker} item={item} />
+              <CatalystCard key={item.ticker} item={item} quote={quotes[item.ticker]} />
             ))}
           </div>
         )}

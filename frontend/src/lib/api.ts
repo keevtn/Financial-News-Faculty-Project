@@ -55,6 +55,35 @@ export async function fetchTickerPrices(
   }
 }
 
+export interface TickerQuote {
+  symbol: string;
+  price: number | null;
+  change: number | null;
+  change_pct: number | null;
+  volume: number | null;
+  market_cap: number | null;
+  day_high: number | null;
+  day_low: number | null;
+  prev_close: number | null;
+}
+
+/** Richer live quotes (price/%chg/volume/market cap/day range) for a few symbols. */
+export async function fetchTickerQuotes(
+  symbols: string[]
+): Promise<Record<string, TickerQuote>> {
+  if (!symbols.length) return {};
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/tickers/quotes?symbols=${symbols.join(",")}`
+    );
+    if (!res.ok) return {};
+    const data = await res.json();
+    return (data.quotes ?? {}) as Record<string, TickerQuote>;
+  } catch {
+    return {};
+  }
+}
+
 /**
  * Score a batch of structured items via the middleware (FinBERT if available,
  * otherwise the Loughran-McDonald keyword scorer).
