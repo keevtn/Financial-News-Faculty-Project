@@ -10,9 +10,11 @@ import { useChart } from "./ChartProvider";
 export default function ChartIconButton({
   ticker,
   className = "",
+  tabIndex,
 }: {
   ticker: string;
   className?: string;
+  tabIndex?: number;
 }) {
   const { openChart } = useChart();
   return (
@@ -21,6 +23,7 @@ export default function ChartIconButton({
       onClick={() => openChart(ticker)}
       aria-label={`View ${ticker} candlestick chart`}
       title="View chart"
+      tabIndex={tabIndex}
       className={`inline-flex items-center text-slate-400 hover:text-[#00d4aa] transition-colors shrink-0 ${className}`}
     >
       <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">

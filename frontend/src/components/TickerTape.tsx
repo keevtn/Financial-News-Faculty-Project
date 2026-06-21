@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { fetchTickerPrices, TickerPrice } from "@/lib/api";
-import { useChart } from "./ChartProvider";
+import ChartIconButton from "./ChartIconButton";
 
 interface TickerTapeProps {
   symbols: string[];
@@ -10,7 +10,6 @@ interface TickerTapeProps {
 }
 
 export default function TickerTape({ symbols, pollIntervalMs = 60_000 }: TickerTapeProps) {
-  const { openChart } = useChart();
   const [prices, setPrices] = useState<Record<string, TickerPrice>>({});
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [paused, setPaused] = useState(false);
@@ -80,23 +79,27 @@ export default function TickerTape({ symbols, pollIntervalMs = 60_000 }: TickerT
           const pct = p.change_pct ?? 0;
           const isDup = i >= ready.length;
           return (
-            <button
-              type="button"
+            <span
               key={`${sym}-${i}`}
-              onClick={() => openChart(sym)}
               aria-hidden={isDup ? "true" : undefined}
-              tabIndex={isDup ? -1 : undefined}
-              aria-label={`${sym} $${p.price!.toFixed(2)}, ${pct >= 0 ? "up" : "down"} ${Math.abs(pct).toFixed(2)} percent. View chart.`}
-              title={`View ${sym} chart`}
-              className="inline-flex items-center gap-1.5 px-4 text-[11px] font-mono hover:bg-[#0f1629] transition-colors"
+              className="inline-flex items-center gap-1.5 px-4 text-[11px] font-mono"
             >
-              <span className="text-slate-300 font-semibold tracking-wide">{sym}</span>
+              <a
+                href={`https://finance.yahoo.com/quote/${sym}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                tabIndex={isDup ? -1 : undefined}
+                className="text-slate-300 font-semibold tracking-wide hover:text-[#00d4aa] transition-colors"
+              >
+                {sym}
+              </a>
               <span className="text-slate-100">${p.price!.toFixed(2)}</span>
               <span className={`${color} font-medium`}>
                 <span aria-hidden="true">{arrow}</span> {pct >= 0 ? "+" : ""}{pct.toFixed(2)}%
               </span>
+              <ChartIconButton ticker={sym} tabIndex={isDup ? -1 : undefined} />
               <span aria-hidden="true" className="text-[#1e2d4a] select-none ml-2">|</span>
-            </button>
+            </span>
           );
         })}
       </div>

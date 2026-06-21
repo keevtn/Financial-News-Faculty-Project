@@ -12,7 +12,7 @@ import {
   fetchTickerQuotes,
 } from "@/lib/api";
 import { formatDistanceToNow } from "@/lib/time";
-import { useChart } from "./ChartProvider";
+import ChartIconButton from "./ChartIconButton";
 
 // ── Visual config ───────────────────────────────────────────────────────────
 
@@ -75,7 +75,6 @@ function SubscoreBar({ label, value }: { label: string; value: number | null }) 
 
 function CatalystCard({ item, quote }: { item: CatalystItem; quote?: TickerQuote }) {
   const [open, setOpen] = useState(false);
-  const { openChart } = useChart();
   const dir = DIR[item.direction];
   const score = Math.max(0, Math.min(100, item.catalyst_score));
 
@@ -92,14 +91,17 @@ function CatalystCard({ item, quote }: { item: CatalystItem; quote?: TickerQuote
           {/* header: ticker + direction + score */}
           <div className="flex items-start justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-2.5">
-              <button
-                onClick={() => openChart(item.ticker)}
-                aria-label={`View ${item.ticker} price chart`}
-                title="View price chart"
-                className="text-lg font-bold font-mono text-slate-100 hover:text-[#00d4aa] transition-colors cursor-pointer"
-              >
-                {item.ticker}
-              </button>
+              <span className="inline-flex items-center gap-1.5">
+                <a
+                  href={`https://finance.yahoo.com/quote/${item.ticker}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-lg font-bold font-mono text-slate-100 hover:text-[#00d4aa] transition-colors"
+                >
+                  {item.ticker}
+                </a>
+                <ChartIconButton ticker={item.ticker} />
+              </span>
               <span
                 className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded border ${dir.bg} ${dir.text} ${dir.border}`}
               >
