@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { fetchTickerPrices, TickerPrice } from "@/lib/api";
+import { useChart } from "./ChartProvider";
 
 interface TickerTapeProps {
   symbols: string[];
@@ -9,6 +10,7 @@ interface TickerTapeProps {
 }
 
 export default function TickerTape({ symbols, pollIntervalMs = 60_000 }: TickerTapeProps) {
+  const { openChart } = useChart();
   const [prices, setPrices] = useState<Record<string, TickerPrice>>({});
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [paused, setPaused] = useState(false);
@@ -76,11 +78,17 @@ export default function TickerTape({ symbols, pollIntervalMs = 60_000 }: TickerT
           const color = up ? "text-emerald-400" : "text-red-400";
           const arrow = up ? "▲" : "▼";
           const pct = p.change_pct ?? 0;
+          const isDup = i >= ready.length;
           return (
-            <span
+            <button
+              type="button"
               key={`${sym}-${i}`}
-              aria-hidden={i >= ready.length ? "true" : undefined}
-              className="inline-flex items-center gap-1.5 px-4 text-[11px] font-mono"
+              onClick={() => openChart(sym)}
+              aria-hidden={isDup ? "true" : undefined}
+              tabIndex={isDup ? -1 : undefined}
+              aria-label={`${sym} $${p.price!.toFixed(2)}, ${pct >= 0 ? "up" : "down"} ${Math.abs(pct).toFixed(2)} percent. View chart.`}
+              title={`View ${sym} chart`}
+              className="inline-flex items-center gap-1.5 px-4 text-[11px] font-mono hover:bg-[#0f1629] transition-colors"
             >
               <span className="text-slate-300 font-semibold tracking-wide">{sym}</span>
               <span className="text-slate-100">${p.price!.toFixed(2)}</span>
@@ -88,7 +96,7 @@ export default function TickerTape({ symbols, pollIntervalMs = 60_000 }: TickerT
                 <span aria-hidden="true">{arrow}</span> {pct >= 0 ? "+" : ""}{pct.toFixed(2)}%
               </span>
               <span aria-hidden="true" className="text-[#1e2d4a] select-none ml-2">|</span>
-            </span>
+            </button>
           );
         })}
       </div>

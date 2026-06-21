@@ -84,6 +84,18 @@ export default function TickerChart({ symbol }: { symbol: string }) {
       }))
     );
 
+    // Previous-session close as a labeled reference line (the gap reference).
+    if (history.prev_close != null) {
+      candles.createPriceLine({
+        price: history.prev_close,
+        color: "#64748b",
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: "prev close",
+      });
+    }
+
     const volume = chart.addSeries(HistogramSeries, {
       priceFormat: { type: "volume" },
       priceScaleId: "",

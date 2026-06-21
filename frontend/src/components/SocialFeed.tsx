@@ -1,5 +1,6 @@
 import { NewsItem } from "@/types/news";
 import { formatDistanceToNow } from "@/lib/time";
+import TickerBadge from "./TickerBadge";
 
 // Left border color keyed by sentiment label
 const BORDER: Record<string, string> = {
@@ -88,9 +89,7 @@ function SocialRow({
       {item.tickers && item.tickers.length > 0 && (
         <div className="flex gap-1.5 shrink-0">
           {item.tickers.slice(0, 2).map((t) => (
-            <span key={t} className="text-[10px] font-mono text-sky-400">
-              ${t}
-            </span>
+            <TickerBadge key={t} ticker={t} variant="plain" />
           ))}
         </div>
       )}
