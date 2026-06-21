@@ -21,8 +21,10 @@ Finviz's CSV ``export.ashx`` is gated behind paid **Elite**, so we parse the
 **free** screener HTML table (the Overview view, ``v=111``). That means:
 
   * We are scraping a public HTML page — done politely (low frequency, on
-    demand, real User-Agent) and degrading gracefully: any HTTP/parse failure
-    returns an empty result with a ``status`` string rather than throwing.
+    demand) via ``curl_cffi`` impersonating a real Chrome TLS fingerprint, since
+    Finviz fronts the page with Cloudflare that 403s plain aiohttp/requests
+    (especially from datacenter IPs). Degrades gracefully: any HTTP/parse
+    failure returns an empty result with a ``status`` string rather than throwing.
   * Free Finviz data is end-of-day / delayed, not real-time. Pre/post-market
     *session* prices are an Elite feature; enrich those later via yfinance if
     needed. What we get reliably: Market Cap, Price, Change %, Volume, Sector.
@@ -179,18 +181,25 @@ def parse_overview(html: str) -> list[dict[str, Any]]:
 # --- Network --------------------------------------------------------------- #
 
 async def _fetch_page(session: Any, params: dict[str, str]) -> Optional[str]:
-    """One screener page; returns HTML or None on any failure."""
+    """One screener page (curl_cffi AsyncSession); returns HTML or None on failure."""
     try:
-        async with session.get(
-            _BASE_URL, params=params, headers=_HEADERS, timeout=_REQUEST_TIMEOUT
-        ) as resp:
-            if resp.status != 200:
-                log.warning("finviz page HTTP %s for %s", resp.status, params)
-                return None
-            return await resp.text()
+        resp = await session.get(_BASE_URL, params=params)
+        if resp.status_code != 200:
+            log.warning("finviz page HTTP %s for %s", resp.status_code, params)
+            return None
+        return resp.text
     except Exception as exc:  # noqa: BLE001
         log.warning("finviz fetch failed (%s): %s", params, type(exc).__name__)
         return None
+
+
+def _new_session() -> Any:
+    """A curl_cffi AsyncSession impersonating Chrome, or None if unavailable."""
+    try:
+        from curl_cffi.requests import AsyncSession
+    except ImportError:
+        return None
+    return AsyncSession(impersonate="chrome", timeout=_REQUEST_TIMEOUT)
 
 
 async def fetch_screener(
@@ -216,15 +225,12 @@ async def fetch_screener(
     limit = max(1, min(limit, _MAX_PAGES * _PAGE_SIZE))
     n_pages = (limit + _PAGE_SIZE - 1) // _PAGE_SIZE
 
-    try:
-        import aiohttp
-    except ImportError:
-        return {"rows": [], "count": 0, "preset": preset,
-                "status": "aiohttp not installed"}
-
     owns_session = session is None
     if owns_session:
-        session = aiohttp.ClientSession()
+        session = _new_session()
+        if session is None:
+            return {"rows": [], "count": 0, "preset": preset,
+                    "status": "curl_cffi not installed"}
 
     rows: list[dict[str, Any]] = []
     status: Optional[str] = None
@@ -279,14 +285,11 @@ async def fetch_market_caps(
     syms = syms[:_MAX_PAGES * _PAGE_SIZE]  # bound the request
     base_params = {"v": "111", "t": ",".join(syms)}
 
-    try:
-        import aiohttp
-    except ImportError:
-        return {}
-
     owns_session = session is None
     if owns_session:
-        session = aiohttp.ClientSession()
+        session = _new_session()
+        if session is None:
+            return {}
 
     caps: dict[str, float] = {}
     try:
