@@ -273,11 +273,13 @@ class DispatchRouter:
 class _HttpClient:
     """Thin wrapper around aiohttp.ClientSession with shared headers."""
 
+    # SEC's fair-access policy asks every automated client to send a User-Agent
+    # that identifies the operator with a real contact email. Set
+    # SEC_CONTACT_EMAIL in the environment (e.g. on Render); the default is a
+    # clearly-placeholder value you should override so SEC doesn't rate-limit you.
+    _CONTACT = os.environ.get("SEC_CONTACT_EMAIL", "set-SEC_CONTACT_EMAIL@example.com")
     _DEFAULT_HEADERS = {
-        "User-Agent": (
-            "FinancialNewsDashboard/1.0 "
-            "(+https://example.com; financial-data-bot)"
-        ),
+        "User-Agent": f"FinancialNewsDashboard/1.0 ({_CONTACT})",
         "Accept": "application/rss+xml, application/xml, text/xml, application/json, */*",
     }
 

@@ -15,11 +15,11 @@ const FALLBACK_PRESETS: ScreenerPreset[] = [
   { id: "top_gainers", label: "Top Gainers" },
   { id: "top_losers", label: "Top Losers" },
   { id: "most_active", label: "Most Active" },
-  { id: "unusual_volume", label: "Unusual Volume" },
-  { id: "most_volatile", label: "Most Volatile" },
-  { id: "new_high", label: "New High" },
-  { id: "new_low", label: "New Low" },
-  { id: "major_news", label: "Major News" },
+  { id: "small_cap_gainers", label: "Small-Cap Gainers" },
+  { id: "aggressive_small", label: "Aggressive Small Caps" },
+  { id: "growth_tech", label: "Growth Tech" },
+  { id: "undervalued_growth", label: "Undervalued Growth" },
+  { id: "most_shorted", label: "Most Shorted" },
 ];
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -121,7 +121,7 @@ export default function ScreenerView() {
         <div className="flex flex-col">
           <h2 className="text-sm font-bold text-slate-100">Market Screener</h2>
           <span className="text-[10px] text-slate-500">
-            Market-wide movers by market cap, change, and volume · via Finviz (delayed)
+            Market-wide movers by market cap, change, and volume · via Yahoo Finance (delayed)
           </span>
         </div>
 

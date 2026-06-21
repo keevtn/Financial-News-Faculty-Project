@@ -90,11 +90,12 @@ Consumed via the public unauthenticated symbol stream endpoint:
 
 No credentials required. Rate limit: 200 requests per hour.
 
-> **Cloudflare note:** StockTwits fronts this API with Cloudflare, which blocks
-> `aiohttp`/`requests` by TLS fingerprint (403 HTML, even with browser headers).
-> The extractor uses **`curl_cffi`** (`impersonate="chrome"`) to present a real
-> browser TLS handshake. If `curl_cffi` is absent, StockTwits ingestion disables
-> itself gracefully and the other sources keep running.
+> **Disabled (Cloudflare).** StockTwits fronts this API with Cloudflare, which
+> blocks plain `aiohttp`/`requests` by TLS fingerprint (403). Reaching it would
+> require impersonating a browser to defeat that block — a gray-area
+> circumvention we deliberately avoid. So this source is **off by default**
+> (`enable_stocktwits=False`; `RUN_STOCKTWITS` unset). Bluesky + Reddit cover
+> social. The extractor is kept (plain, non-impersonating) for reference.
 Crypto tickers use StockTwits' `.X` suffix convention.
 Defined in `IngestionModule.py` → `STOCKTWITS_WATCHLIST`.
 
@@ -146,5 +147,5 @@ Defined in `IngestionModule.py` → `BLUESKY_SEARCH_TERMS`.
 | SEC EDGAR | 5 filing types | None | Live |
 | FDA | 3 endpoints | None | Live |
 | Reddit (RSS) | 11 subreddits | None | Live |
-| StockTwits | 22 tickers | None (needs curl_cffi) | Live (RUN_SOCIAL) |
+| StockTwits | 22 tickers | n/a | Disabled, need to gain access |
 | Bluesky | 27 search terms | None | Live (RUN_SOCIAL) |

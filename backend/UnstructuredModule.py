@@ -146,15 +146,15 @@ class StockTwitsExtractor:
         url = self._STREAM_URL.format(ticker=ticker)
         items: list[NewsItem] = []
         try:
-            resp = await session.get(url)
-            if resp.status_code == 429:
-                log.warning("StockTwits rate-limited — backing off 60 s")
-                await asyncio.sleep(60)
-                return []
-            if resp.status_code != 200:
-                log.debug("StockTwits [%s] HTTP %d", ticker, resp.status_code)
-                return []
-            data: dict[str, Any] = resp.json()
+            async with session.get(url) as resp:
+                if resp.status == 429:
+                    log.warning("StockTwits rate-limited — backing off 60 s")
+                    await asyncio.sleep(60)
+                    return []
+                if resp.status != 200:
+                    log.debug("StockTwits [%s] HTTP %d", ticker, resp.status)
+                    return []
+                data: dict[str, Any] = await resp.json(content_type=None)
 
             for msg in data.get("messages", []):
                 body: str = msg.get("body", "").strip()
@@ -201,25 +201,18 @@ class StockTwitsExtractor:
 
     async def run(self) -> None:
         self._running = True
-        # StockTwits sits behind Cloudflare, which blocks aiohttp/requests by TLS
-        # fingerprint (a plain aiohttp GET gets 403 HTML even with browser headers).
-        # curl_cffi impersonates a real Chrome TLS handshake — the same reason
-        # plain `curl` succeeds where aiohttp fails. Without it we can't reach
-        # StockTwits, so disable this one source gracefully (Bluesky still runs).
-        try:
-            from curl_cffi.requests import AsyncSession
-        except ImportError:
-            log.warning(
-                "curl_cffi not installed — StockTwits is Cloudflare-protected and "
-                "cannot be polled without it; StockTwits ingestion disabled. "
-                "Add `curl_cffi` to requirements to enable it."
-            )
-            return
+        # NOTE: StockTwits fronts this API with Cloudflare, which blocks plain
+        # aiohttp by TLS fingerprint (403). We deliberately do NOT bypass that
+        # with browser impersonation — that would be circumventing their access
+        # control. So this extractor is disabled by default; if enabled it makes
+        # ordinary requests and simply gets blocked (no data, no crash). Kept for
+        # reference / in case StockTwits ever opens a sanctioned path again.
         log.info(
-            "StockTwitsExtractor started — %d tickers, interval=%ss (curl_cffi/chrome)",
+            "StockTwitsExtractor started — %d tickers, interval=%ss",
             len(self.watchlist), self.poll_interval,
         )
-        async with AsyncSession(impersonate="chrome", timeout=15) as session:
+        timeout = aiohttp.ClientTimeout(total=15)
+        async with aiohttp.ClientSession(headers=_HEADERS, timeout=timeout) as session:
             while self._running:
                 loop_start = asyncio.get_running_loop().time()
                 total = 0
@@ -395,7 +388,7 @@ class UnstructuredAgent:
         self,
         dispatcher: DispatchRouter | None = None,
         keywords: list[str] | None = None,
-        enable_stocktwits: bool = True,
+        enable_stocktwits: bool = False,  # off: clean (non-impersonating) access is Cloudflare-blocked
         enable_bluesky: bool = True,
         stocktwits_interval: float = 480.0,
         bluesky_interval: float = 300.0,

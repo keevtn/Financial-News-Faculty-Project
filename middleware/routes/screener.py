@@ -19,7 +19,7 @@ from typing import Any
 
 from fastapi import APIRouter, Query, Request
 
-from finviz_screener import available_presets, fetch_screener
+from market_screener import available_presets, fetch_screener, preset_labels
 from middleware.limiter import limiter
 
 log = logging.getLogger("middleware.routes.screener")
@@ -36,16 +36,7 @@ _CACHE_TTL = 60.0  # seconds
 @limiter.limit("60/minute")
 async def presets(request: Request) -> dict[str, Any]:
     """Selectable screen presets, with human labels for the UI."""
-    labels = {
-        "top_gainers": "Top Gainers",
-        "top_losers": "Top Losers",
-        "most_active": "Most Active",
-        "unusual_volume": "Unusual Volume",
-        "most_volatile": "Most Volatile",
-        "new_high": "New High",
-        "new_low": "New Low",
-        "major_news": "Major News",
-    }
+    labels = preset_labels()
     return {"presets": [{"id": p, "label": labels.get(p, p)} for p in available_presets()]}
 
 

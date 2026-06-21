@@ -2,8 +2,6 @@
 aiohttp
 feedparser
 python-dateutil
-curl_cffi               # StockTwits is Cloudflare-protected; impersonates a real
-                        # browser TLS handshake so the API is reachable server-side
 
 # Sentiment analysis — install the one you want to use (see sentiment.py)
 vaderSentiment          # VaderSentimentAnalyzer  (lightweight fallback)

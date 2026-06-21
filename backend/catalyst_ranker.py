@@ -33,7 +33,6 @@ ranking logic is unit-testable without a database or network.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import math
@@ -558,55 +557,22 @@ async def _run_llm(
 
 # --- Orchestrator ---------------------------------------------------------- #
 
-def _yfinance_market_caps_sync(tickers: list[str]) -> dict[str, float]:
-    """Per-ticker market caps via yfinance fast_info (sync; call via to_thread)."""
-    try:
-        import yfinance as yf
-    except ImportError:
-        return {}
-    out: dict[str, float] = {}
-    for sym in tickers:
-        try:
-            fi = yf.Ticker(sym).fast_info
-            mc = None
-            try:
-                mc = fi["market_cap"]
-            except Exception:  # noqa: BLE001
-                mc = getattr(fi, "market_cap", None)
-            if mc:
-                out[sym] = float(mc)
-        except Exception:  # noqa: BLE001
-            continue
-    return out
-
-
 async def _fetch_market_caps_safe(tickers: list[str]) -> dict[str, float]:
     """
-    Resolve market caps, never raising. Finviz first (one request, when
-    reachable); then yfinance for anything Finviz didn't return — which on a
-    datacenter deployment (e.g. Render, whose IP Finviz blocks) means *all* of
-    them. yfinance runs fine from those IPs, so the size factor stays live.
+    Resolve market caps via Yahoo (yfinance), never raising. Works from
+    datacenter IPs (e.g. Render), so the size factor stays live in production.
+    Returns {} on any failure -> size-neutral scoring.
     """
     if not tickers:
         return {}
-
-    caps: dict[str, float] = {}
     try:
-        from finviz_screener import fetch_market_caps
+        from market_screener import fetch_market_caps
         caps = await fetch_market_caps(tickers)
+        log.info("market caps resolved: %d/%d tickers (yahoo)", len(caps), len(tickers))
+        return caps
     except Exception as exc:  # noqa: BLE001
-        log.warning("Finviz market-cap fetch failed (%s)", exc)
-
-    missing = [t for t in tickers if t not in caps]
-    if missing:
-        try:
-            yf_caps = await asyncio.to_thread(_yfinance_market_caps_sync, missing)
-            caps.update(yf_caps)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("yfinance market-cap fallback failed (%s)", exc)
-
-    log.info("market caps resolved: %d/%d tickers (finviz+yfinance)", len(caps), len(tickers))
-    return caps
+        log.warning("market-cap fetch failed (%s) — size-neutral scoring", exc)
+        return {}
 
 
 async def rank_catalysts(

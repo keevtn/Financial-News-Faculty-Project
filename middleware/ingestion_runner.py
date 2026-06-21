@@ -131,7 +131,9 @@ async def _start_social(app: Any, mongo_uri: str, analyzer: Any, attach_storage:
         log.error("Social ingestion deps unavailable (%s) — skipped", exc)
         return
 
-    enable_st = _env_flag("RUN_STOCKTWITS", True)
+    # StockTwits defaults OFF: clean (non-impersonating) access is Cloudflare-
+    # blocked, and we don't circumvent that. Bluesky + Reddit cover social.
+    enable_st = _env_flag("RUN_STOCKTWITS", False)
     enable_bsky = _env_flag("RUN_BLUESKY", True)
     if not (enable_st or enable_bsky):
         log.info("RUN_SOCIAL set but both sources disabled — skipping social")
