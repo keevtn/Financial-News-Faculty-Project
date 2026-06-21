@@ -1,20 +1,25 @@
-fastapi
-uvicorn[standard]
-motor
-pymongo[srv]
-python-dotenv
-slowapi
-yfinance
+# Pinned for reproducible deploys. Render reinstalls these on every push, and a
+# few (yfinance especially, anthropic) ship breaking changes frequently — so an
+# unrelated redeploy could silently break production if these floated to latest.
+# These are the exact versions this code is tested against. Bump deliberately and
+# re-test; don't unpin.
+fastapi==0.136.3
+uvicorn[standard]==0.40.0
+pydantic==2.13.4          # fastapi's core dep; minor bumps have broken fastapi before
+motor==3.7.1
+pymongo[srv]==4.17.0
+python-dotenv==1.2.2
+slowapi==0.1.9
+yfinance==1.4.1           # VOLATILE: breaks its API often (yf.screen, fast_info) — never float
 # Ingestion pipeline (in-process when RUN_INGESTION/RUN_SOCIAL=true — see ingestion_runner.py)
-aiohttp
-feedparser
-python-dateutil
-# Anthropic SDK — powers the catalyst ranker's LLM deep-read and the agent route.
-# Optional at runtime: the ranker auto-falls back to its quantitative pre-score
-# when this package (or ANTHROPIC_API_KEY) is absent.
-anthropic
-# FinBERT (optional — only needed for local high-accuracy scoring)
-# Uncomment both lines if torch is available; middleware auto-falls back to
-# Loughran-McDonald when these are absent (works fine on free hosting tiers).
+aiohttp==3.13.5
+feedparser==6.0.12
+python-dateutil==2.9.0.post0
+# Anthropic SDK — catalyst ranker's LLM deep-read + the agent route. Optional at
+# runtime: the ranker falls back to its quantitative pre-score if this (or
+# ANTHROPIC_API_KEY) is absent.
+anthropic==0.111.0
+# FinBERT (optional — only needed for local high-accuracy scoring). Uncomment both
+# if torch is available; middleware auto-falls back to Loughran-McDonald otherwise.
 # transformers
 # torch
