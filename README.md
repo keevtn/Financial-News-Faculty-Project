@@ -2,6 +2,10 @@
 
 A real-time financial news monitoring platform that ingests headlines from multiple sources, classifies sentiment using a finance-tuned transformer model, and displays results in a live dashboard.
 
+> **Academic research project — not a commercial product.** For educational /
+> research use only. **Not investment advice.** Market data is **delayed** and
+> obtained via third-party APIs. See [Data Licensing & Compliance](#data-licensing--compliance).
+
 ---
 
 ## Architecture
@@ -186,3 +190,49 @@ Financial-News-Faculty-Project/
 ├── .gitignore
 └── start.ps1                   # launches all three services
 ```
+
+---
+
+## Data Licensing & Compliance
+
+This is a **non-commercial, academic research project** built for a faculty
+advisor. It is **not** a commercial product or a public market-data service, and
+nothing here constitutes **investment advice**.
+
+### Data sources and their terms
+
+| Source | Type | Notes |
+|---|---|---|
+| RSS newswires (Bloomberg, FT, WSJ, CNBC, PR Newswire, GlobeNewswire, Benzinga, …) | Official public feeds | Published for syndication; consumed as intended |
+| SEC EDGAR | Official US-government API | Public; a contact User-Agent is sent per SEC fair-access policy (`SEC_CONTACT_EMAIL`) |
+| FDA (openFDA) | Official US-government API | Public |
+| Reddit | Public RSS feeds | Unauthenticated, low-volume |
+| Bluesky | Official AT Protocol API | Unauthenticated read |
+| Anthropic (Claude) | Licensed, paid API | Powers the catalyst ranker |
+| **Yahoo Finance (via `yfinance`)** | **Unofficial library** | Prices, quotes, OHLCV charts, the screener, and market caps. Ubiquitous in research but **not an officially sanctioned API**, and subject to Yahoo's Terms of Service. Used here for **non-commercial, educational** purposes with **delayed** data only. |
+
+Sources that require circumventing a deliberate access control (e.g. browser/TLS
+impersonation to bypass a bot block) are **intentionally not used** — StockTwits
+and Finviz scraping were removed for this reason.
+
+### Compliance posture
+
+- **Delayed, non-commercial, educational display only.** Real-time exchange-data
+  redistribution requires exchange agreements and is out of scope.
+- **Private / advisor-facing deployment.** The site is marked `noindex` and can be
+  password-gated with HTTP Basic Auth by setting `BASIC_AUTH_USER` /
+  `BASIC_AUTH_PASS` env vars on the host (see `frontend/src/middleware.ts`), so it
+  runs as a private demo rather than a public page.
+- **No data redistribution.** Data is shown for academic demonstration — not
+  republished, resold, or offered as a service.
+- For a future **public / commercial** deployment, replace `yfinance` with a
+  licensed market-data provider whose terms permit public display of (delayed)
+  data — e.g. Polygon, Financial Modeling Prep, Tiingo, or Finnhub — and source
+  screener data from an authorized API (e.g. Finviz Elite, where its terms allow).
+
+### Code license
+
+The **source code** in this repository is provided for academic and educational
+use. Third-party data accessed at runtime remains the property of its respective
+providers and is governed by their terms. Provided **as-is, without warranty**;
+use at your own risk. **Not investment advice.**
