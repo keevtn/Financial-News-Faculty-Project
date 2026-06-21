@@ -12,6 +12,7 @@ import {
   fetchTickerQuotes,
 } from "@/lib/api";
 import { formatDistanceToNow } from "@/lib/time";
+import { useChart } from "./ChartProvider";
 
 // ── Visual config ───────────────────────────────────────────────────────────
 
@@ -63,17 +64,18 @@ function SubscoreBar({ label, value }: { label: string; value: number | null }) 
   const pct = value == null ? 0 : Math.round(value * 100);
   return (
     <div className="flex items-center gap-2">
-      <span className="w-16 text-[10px] uppercase tracking-wider text-slate-500 shrink-0">{label}</span>
+      <span className="w-16 text-[10px] uppercase tracking-wider text-slate-400 shrink-0">{label}</span>
       <div className="flex-1 h-1 bg-[#1e2d4a] rounded-full overflow-hidden">
         <div className="h-full bg-[#00d4aa]/70" style={{ width: `${pct}%` }} />
       </div>
-      <span className="w-7 text-right text-[10px] font-mono text-slate-500">{value == null ? "–" : pct}</span>
+      <span className="w-7 text-right text-[10px] font-mono text-slate-400">{value == null ? "–" : pct}</span>
     </div>
   );
 }
 
 function CatalystCard({ item, quote }: { item: CatalystItem; quote?: TickerQuote }) {
   const [open, setOpen] = useState(false);
+  const { openChart } = useChart();
   const dir = DIR[item.direction];
   const score = Math.max(0, Math.min(100, item.catalyst_score));
 
@@ -82,7 +84,7 @@ function CatalystCard({ item, quote }: { item: CatalystItem; quote?: TickerQuote
       <div className="flex">
         {/* rank rail */}
         <div className="flex flex-col items-center justify-center w-12 shrink-0 bg-[#0a0f1e] border-r border-[#1e2d4a] py-4">
-          <span className="text-[10px] uppercase tracking-widest text-slate-600">Rank</span>
+          <span className="text-[10px] uppercase tracking-widest text-slate-400">Rank</span>
           <span className="text-xl font-bold text-slate-200 leading-none mt-1">{item.rank}</span>
         </div>
 
@@ -90,26 +92,26 @@ function CatalystCard({ item, quote }: { item: CatalystItem; quote?: TickerQuote
           {/* header: ticker + direction + score */}
           <div className="flex items-start justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-2.5">
-              <a
-                href={`https://finance.yahoo.com/quote/${item.ticker}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-lg font-bold font-mono text-slate-100 hover:text-[#00d4aa] transition-colors"
+              <button
+                onClick={() => openChart(item.ticker)}
+                aria-label={`View ${item.ticker} price chart`}
+                title="View price chart"
+                className="text-lg font-bold font-mono text-slate-100 hover:text-[#00d4aa] transition-colors cursor-pointer"
               >
                 {item.ticker}
-              </a>
+              </button>
               <span
                 className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded border ${dir.bg} ${dir.text} ${dir.border}`}
               >
                 {dir.icon} {item.direction}
               </span>
-              <span className="text-[10px] text-slate-500">
+              <span className="text-[10px] text-slate-400">
                 conf {(item.confidence * 100).toFixed(0)}%
               </span>
             </div>
 
             <div className="flex flex-col items-end shrink-0">
-              <span className="text-[10px] uppercase tracking-widest text-slate-600">Catalyst</span>
+              <span className="text-[10px] uppercase tracking-widest text-slate-400">Catalyst</span>
               <span className={`text-xl font-bold font-mono leading-none ${dir.text}`}>
                 {item.catalyst_score.toFixed(0)}
               </span>
@@ -131,12 +133,12 @@ function CatalystCard({ item, quote }: { item: CatalystItem; quote?: TickerQuote
                 </span>
               )}
               {quote.volume != null && (
-                <span className="text-slate-500">
+                <span className="text-slate-400">
                   Vol <span className="font-mono text-slate-400">{fmtVolume(quote.volume)}</span>
                 </span>
               )}
               {quote.day_low != null && quote.day_high != null && (
-                <span className="text-slate-500 hidden sm:inline">
+                <span className="text-slate-400 hidden sm:inline">
                   Day <span className="font-mono text-slate-400">{quote.day_low.toFixed(2)}–{quote.day_high.toFixed(2)}</span>
                 </span>
               )}
@@ -153,21 +155,21 @@ function CatalystCard({ item, quote }: { item: CatalystItem; quote?: TickerQuote
 
           {/* meta chips */}
           <div className="flex flex-wrap items-center gap-2 text-[10px]">
-            <span className="text-slate-500">
+            <span className="text-slate-400">
               <span className="font-mono text-slate-300">{item.n_stories}</span> stories
             </span>
-            <span className="text-slate-700">·</span>
-            <span className="text-slate-500">
+            <span className="text-slate-400">·</span>
+            <span className="text-slate-400">
               <span className="font-mono text-slate-300">{item.n_sources}</span> sources
             </span>
-            <span className="text-slate-700">·</span>
-            <span className="text-slate-500">
+            <span className="text-slate-400">·</span>
+            <span className="text-slate-400">
               <span className="font-mono text-slate-300">{item.abnormal_attention}×</span> normal attention
             </span>
             {item.market_cap != null && (
               <>
-                <span className="text-slate-700">·</span>
-                <span className="text-slate-500">
+                <span className="text-slate-400">·</span>
+                <span className="text-slate-400">
                   <span className="font-mono text-slate-300">{fmtMarketCap(item.market_cap)}</span> mkt cap
                 </span>
               </>
@@ -199,7 +201,7 @@ function CatalystCard({ item, quote }: { item: CatalystItem; quote?: TickerQuote
             <div className="pt-1">
               <button
                 onClick={() => setOpen((o) => !o)}
-                className="text-[10px] uppercase tracking-wider text-slate-500 hover:text-[#00d4aa] transition-colors"
+                className="text-[10px] uppercase tracking-wider text-slate-400 hover:text-[#00d4aa] transition-colors"
               >
                 {open ? "▾ Hide" : "▸ Show"} {item.sample_articles.length} source
                 {item.sample_articles.length === 1 ? "" : "s"}
@@ -216,9 +218,9 @@ function CatalystCard({ item, quote }: { item: CatalystItem; quote?: TickerQuote
                           >
                             {a.source_type}
                           </span>
-                          <span className="text-slate-500 truncate">{a.source}</span>
+                          <span className="text-slate-400 truncate">{a.source}</span>
                           {a.reprints > 1 && (
-                            <span className="text-slate-600">+{a.reprints - 1} reprints</span>
+                            <span className="text-slate-400">+{a.reprints - 1} reprints</span>
                           )}
                         </div>
                         {isLink ? (
@@ -256,7 +258,7 @@ function Stat({
     <div>
       <div className={`text-lg font-bold font-mono leading-none ${color}`}>{value}</div>
       <div className="text-[10px] text-slate-400 mt-1">{label}</div>
-      <div className="text-[9px] text-slate-600 leading-tight">{hint}</div>
+      <div className="text-[9px] text-slate-400 leading-tight">{hint}</div>
     </div>
   );
 }
@@ -268,13 +270,13 @@ function TrackRecordPanel({ tr }: { tr: CatalystTrackRecord }) {
   return (
     <div className="max-w-3xl mx-auto mb-4 bg-[#0f1629] border border-[#1e2d4a] rounded-lg px-4 py-3">
       <div className="flex items-center justify-between mb-2.5">
-        <span className="text-[10px] uppercase tracking-widest text-slate-500">Track Record</span>
-        <span className="text-[10px] text-slate-500">
+        <span className="text-[10px] uppercase tracking-widest text-slate-400">Track Record</span>
+        <span className="text-[10px] text-slate-400">
           {s.graded_runs} graded run{s.graded_runs === 1 ? "" : "s"}
         </span>
       </div>
       {s.graded_runs === 0 ? (
-        <p className="text-xs text-slate-500 leading-relaxed">
+        <p className="text-xs text-slate-400 leading-relaxed">
           No graded runs yet — performance appears automatically once a ranked
           session closes and is graded against realized open→close moves.
         </p>
@@ -340,13 +342,13 @@ export default function CatalystView() {
       <div className="bg-[#0f1629] border-b border-[#1e2d4a] px-6 py-3 flex items-center gap-4 flex-wrap sticky top-0 z-10">
         <div className="flex flex-col">
           <h2 className="text-sm font-bold text-slate-100">Pre-Market Catalyst Ranking</h2>
-          <span className="text-[10px] text-slate-500">
+          <span className="text-[10px] text-slate-400">
             Tickers ranked by the strength of overnight news catalysts
           </span>
         </div>
 
         {ranking && (
-          <div className="flex items-center gap-3 text-[10px] text-slate-500 flex-wrap">
+          <div className="flex items-center gap-3 text-[10px] text-slate-400 flex-wrap">
             <span
               className={`px-1.5 py-0.5 rounded border font-semibold uppercase tracking-wider ${
                 ranking.used_llm
@@ -360,12 +362,12 @@ export default function CatalystView() {
             <span>
               window {shortDateTime(ranking.window_start)} → {shortDateTime(ranking.window_end)}
             </span>
-            <span className="text-slate-700">·</span>
+            <span className="text-slate-400">·</span>
             <span>
               <span className="font-mono text-slate-300">{ranking.candidate_count}</span> candidates from{" "}
               <span className="font-mono text-slate-300">{ranking.doc_count}</span> docs
             </span>
-            <span className="text-slate-700">·</span>
+            <span className="text-slate-400">·</span>
             <span>generated {formatDistanceToNow(ranking.generated_at)}</span>
           </div>
         )}
@@ -383,18 +385,18 @@ export default function CatalystView() {
       <div className="p-6">
         {trackRecord && <TrackRecordPanel tr={trackRecord} />}
         {loading && !ranking ? (
-          <p className="text-sm text-slate-500">Loading latest ranking…</p>
+          <p className="text-sm text-slate-400">Loading latest ranking…</p>
         ) : !ranking ? (
           <div className="max-w-lg mx-auto text-center py-16">
             <p className="text-sm text-slate-300 font-semibold">No ranking generated yet</p>
-            <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+            <p className="text-xs text-slate-400 mt-2 leading-relaxed">
               Catalyst rankings are produced on demand by the backend. Trigger one with a
               <span className="font-mono text-slate-400"> POST /api/catalyst/run</span> (key-protected),
               ideally before the market opens, then refresh this view.
             </p>
           </div>
         ) : ranking.items.length === 0 ? (
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-slate-400">
             The latest run found no qualifying catalysts in the overnight window.
           </p>
         ) : (

@@ -150,3 +150,80 @@ async def get_ticker_quotes(
         return {"quotes": {}}
     quotes = await asyncio.to_thread(_fetch_quotes_sync, sym_list)
     return {"quotes": quotes}
+
+
+# --- OHLCV history (for candlestick charts) -------------------------------- #
+
+# range key -> (yfinance period, interval). Intraday for short ranges, daily
+# bars for longer ones.
+_HISTORY_RANGES: dict[str, tuple[str, str]] = {
+    "1D": ("1d", "5m"),
+    "5D": ("5d", "15m"),
+    "1M": ("1mo", "1d"),
+    "3M": ("3mo", "1d"),
+    "1Y": ("1y", "1d"),
+}
+_history_cache: dict[tuple[str, str], tuple[dict[str, Any], float]] = {}
+_HIST_TTL_INTRADAY = 120     # seconds (1D / 5D)
+_HIST_TTL_DAILY = 1800       # seconds (1M / 3M / 1Y)
+
+
+def _fetch_history_sync(symbol: str, range_key: str) -> dict[str, Any]:
+    """OHLCV bars for one symbol/range via yfinance; shaped for lightweight-charts."""
+    period, interval = _HISTORY_RANGES[range_key]
+    now = time.time()
+    cache_key = (symbol, range_key)
+    cached = _history_cache.get(cache_key)
+    if cached and cached[1] > now:
+        return cached[0]
+
+    bars: list[dict[str, Any]] = []
+    prev_close = None
+    try:
+        import yfinance as yf
+        tk = yf.Ticker(symbol)
+        df = tk.history(period=period, interval=interval)
+        if df is not None and not df.empty:
+            for ts, row in df.iterrows():
+                try:
+                    vol = row["Volume"]
+                    bars.append({
+                        "time": int(ts.timestamp()),
+                        "open": round(float(row["Open"]), 4),
+                        "high": round(float(row["High"]), 4),
+                        "low": round(float(row["Low"]), 4),
+                        "close": round(float(row["Close"]), 4),
+                        "volume": int(vol) if vol == vol else 0,  # NaN != NaN
+                    })
+                except Exception:  # noqa: BLE001
+                    continue
+        try:
+            pc = tk.fast_info.previous_close
+            prev_close = round(float(pc), 4) if pc else None
+        except Exception:  # noqa: BLE001
+            prev_close = None
+    except Exception:  # noqa: BLE001
+        bars = []
+
+    payload = {
+        "symbol": symbol, "range": range_key, "interval": interval,
+        "prev_close": prev_close, "bars": bars,
+        "status": None if bars else "no data",
+    }
+    ttl = _HIST_TTL_INTRADAY if range_key in ("1D", "5D") else _HIST_TTL_DAILY
+    if bars:
+        _history_cache[cache_key] = (payload, now + ttl)
+    return payload
+
+
+@router.get("/history")
+async def get_ticker_history(
+    symbol: str = Query(..., description="Single ticker symbol"),
+    range: str = Query(default="1M", description="1D | 5D | 1M | 3M | 1Y"),
+) -> dict[str, Any]:
+    """Candlestick OHLCV bars for one ticker over a range (for the chart view)."""
+    sym = symbol.strip().upper()
+    range_key = range.upper() if range.upper() in _HISTORY_RANGES else "1M"
+    if not sym:
+        return {"symbol": "", "range": range_key, "bars": [], "status": "no symbol"}
+    return await asyncio.to_thread(_fetch_history_sync, sym, range_key)

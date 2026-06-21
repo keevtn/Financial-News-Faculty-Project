@@ -13,6 +13,7 @@ import UnstructuredView from "@/components/UnstructuredView";
 import CatalystView from "@/components/CatalystView";
 import ScreenerView from "@/components/ScreenerView";
 import TickerTape from "@/components/TickerTape";
+import { ChartProvider } from "@/components/ChartProvider";
 
 const DEFAULT_FILTERS: FilterState = {
   topics: new Set(ALL_TOPICS),
@@ -282,10 +283,13 @@ export default function HomePage() {
   }, [socialPreTickerFiltered, socialFilters.tickers, socialFilters.limit]);
 
   return (
+    <ChartProvider>
     <div className="flex flex-col h-screen overflow-hidden">
+      <a href="#main-content" className="skip-link">Skip to content</a>
       <Header itemCount={filtered.length} scoringPending={scoringPending} />
       <TickerTape symbols={allSymbols} pollIntervalMs={60_000} />
       <TabNav active={activeTab} onChange={setActiveTab} />
+      <main id="main-content" className="flex-1 flex flex-col min-h-0 overflow-hidden">
       {activeTab === "structured" ? (
         <>
           <StatsBar items={filtered} />
@@ -308,6 +312,8 @@ export default function HomePage() {
       ) : (
         <ScreenerView />
       )}
+      </main>
     </div>
+    </ChartProvider>
   );
 }

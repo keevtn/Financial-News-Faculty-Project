@@ -100,6 +100,42 @@ export async function fetchTickerQuotes(
   }
 }
 
+export interface OHLCVBar {
+  time: number;   // UTC epoch seconds
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface TickerHistory {
+  symbol: string;
+  range: string;
+  interval: string;
+  prev_close: number | null;
+  bars: OHLCVBar[];
+  status: string | null;
+}
+
+export type ChartRange = "1D" | "5D" | "1M" | "3M" | "1Y";
+
+/** OHLCV candlestick history for one ticker over a range. */
+export async function fetchTickerHistory(
+  symbol: string,
+  range: ChartRange = "1M",
+): Promise<TickerHistory | null> {
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/tickers/history?symbol=${encodeURIComponent(symbol)}&range=${range}`
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as TickerHistory;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Score a batch of structured items via the middleware (FinBERT if available,
  * otherwise the Loughran-McDonald keyword scorer).
