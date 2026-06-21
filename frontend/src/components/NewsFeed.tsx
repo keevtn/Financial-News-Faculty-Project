@@ -9,7 +9,7 @@ interface NewsFeedProps {
 export default function NewsFeed({ items, scoringPending }: NewsFeedProps) {
   if (items.length === 0) {
     return (
-      <main className="flex-1 flex items-center justify-center text-slate-600 text-sm">
+      <main className="flex-1 flex items-center justify-center text-slate-400 text-sm">
         No articles match your current filters.
       </main>
     );

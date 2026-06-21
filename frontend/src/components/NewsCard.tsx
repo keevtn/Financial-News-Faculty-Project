@@ -64,16 +64,16 @@ export default function NewsCard({ item, scoringPending }: NewsCardProps) {
       )}
 
       {/* description */}
-      <p className="text-xs text-slate-500 leading-relaxed line-clamp-2">
+      <p className="text-xs text-slate-400 leading-relaxed line-clamp-2">
         {item.description}
       </p>
 
       {/* footer */}
       <footer className="flex items-center justify-between mt-auto pt-2 border-t border-[#1e2d4a]">
-        <span className="text-[10px] text-slate-600 truncate max-w-[60%]">
+        <span className="text-[10px] text-slate-400 truncate max-w-[60%]">
           {item.source}
         </span>
-        <span className="text-[10px] text-slate-600 shrink-0">
+        <span className="text-[10px] text-slate-400 shrink-0">
           {formatDistanceToNow(item.published_at)}
         </span>
       </footer>

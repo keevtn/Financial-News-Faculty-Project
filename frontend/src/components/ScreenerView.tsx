@@ -73,7 +73,7 @@ function sortRows(rows: ScreenerRow[], col: SortCol | null, dir: SortDir): Scree
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
-const NUM_HEAD = "px-3 py-2 text-right text-[10px] uppercase tracking-wider text-slate-500 select-none cursor-pointer hover:text-[#00d4aa]";
+const SORT_BTN = "text-[10px] uppercase tracking-wider text-slate-400 hover:text-[#00d4aa] transition-colors";
 
 export default function ScreenerView() {
   const [presets, setPresets] = useState<ScreenerPreset[]>(FALLBACK_PRESETS);
@@ -112,6 +112,8 @@ export default function ScreenerView() {
   }
 
   const arrow = (col: SortCol) => (sortCol === col ? (sortDir === "asc" ? " ▲" : " ▼") : "");
+  const ariaSort = (col: SortCol): "ascending" | "descending" | undefined =>
+    sortCol === col ? (sortDir === "asc" ? "ascending" : "descending") : undefined;
   const rows = result ? sortRows(result.rows, sortCol, sortDir) : [];
 
   return (
@@ -120,19 +122,19 @@ export default function ScreenerView() {
       <div className="bg-[#0f1629] border-b border-[#1e2d4a] px-6 py-3 flex items-center gap-4 flex-wrap sticky top-0 z-10">
         <div className="flex flex-col">
           <h2 className="text-sm font-bold text-slate-100">Market Screener</h2>
-          <span className="text-[10px] text-slate-500">
+          <span className="text-[10px] text-slate-400">
             Market-wide movers by market cap, change, and volume · via Yahoo Finance (delayed)
           </span>
         </div>
 
         {result && !result.status && (
-          <div className="flex items-center gap-3 text-[10px] text-slate-500 flex-wrap">
+          <div className="flex items-center gap-3 text-[10px] text-slate-400 flex-wrap">
             <span>
               <span className="font-mono text-slate-300">{result.count}</span> matches
             </span>
-            {result.cached && <span className="text-slate-600">· cached</span>}
+            {result.cached && <span className="text-slate-400">· cached</span>}
             {result.fetched_at && (
-              <span className="text-slate-600">
+              <span className="text-slate-400">
                 · {formatDistanceToNow(new Date(result.fetched_at * 1000).toISOString())}
               </span>
             )}
@@ -172,11 +174,11 @@ export default function ScreenerView() {
       {/* body */}
       <div className="p-6">
         {loading && !result ? (
-          <p className="text-sm text-slate-500">Loading screen…</p>
+          <p className="text-sm text-slate-400">Loading screen…</p>
         ) : result && result.status ? (
           <div className="max-w-lg mx-auto text-center py-16">
             <p className="text-sm text-slate-300 font-semibold">Screen unavailable</p>
-            <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+            <p className="text-xs text-slate-400 mt-2 leading-relaxed">
               The screener source could not be reached right now
               <span className="font-mono text-slate-400"> ({result.status})</span>.
               This can happen if the upstream provider is temporarily blocking the
@@ -184,38 +186,45 @@ export default function ScreenerView() {
             </p>
           </div>
         ) : rows.length === 0 ? (
-          <p className="text-sm text-slate-500">No matches for this screen.</p>
+          <p className="text-sm text-slate-400">No matches for this screen.</p>
         ) : (
           <div className="max-w-5xl mx-auto border border-[#1e2d4a] rounded-lg overflow-hidden">
             <table className="w-full text-xs">
               <thead className="bg-[#0a0f1e] border-b border-[#1e2d4a]">
                 <tr>
-                  <th className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 w-8">#</th>
-                  <th
-                    className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 select-none cursor-pointer hover:text-[#00d4aa]"
-                    onClick={() => toggleSort("ticker")}
-                  >
-                    Ticker{arrow("ticker")}
+                  <th scope="col" className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-400 w-8">#</th>
+                  <th scope="col" aria-sort={ariaSort("ticker")} className="px-3 py-2 text-left">
+                    <button type="button" onClick={() => toggleSort("ticker")} className={SORT_BTN}>
+                      Ticker{arrow("ticker")}
+                    </button>
                   </th>
-                  <th className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500">Company</th>
-                  <th className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 hidden md:table-cell">Sector</th>
-                  <th className={NUM_HEAD} onClick={() => toggleSort("price")}>Price{arrow("price")}</th>
-                  <th className={NUM_HEAD} onClick={() => toggleSort("change_pct")}>Change{arrow("change_pct")}</th>
-                  <th className={NUM_HEAD} onClick={() => toggleSort("volume")}>Volume{arrow("volume")}</th>
-                  <th className={NUM_HEAD} onClick={() => toggleSort("market_cap")}>Mkt Cap{arrow("market_cap")}</th>
+                  <th scope="col" className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-400">Company</th>
+                  <th scope="col" className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-400 hidden md:table-cell">Sector</th>
+                  <th scope="col" aria-sort={ariaSort("price")} className="px-3 py-2 text-right">
+                    <button type="button" onClick={() => toggleSort("price")} className={SORT_BTN}>Price{arrow("price")}</button>
+                  </th>
+                  <th scope="col" aria-sort={ariaSort("change_pct")} className="px-3 py-2 text-right">
+                    <button type="button" onClick={() => toggleSort("change_pct")} className={SORT_BTN}>Change{arrow("change_pct")}</button>
+                  </th>
+                  <th scope="col" aria-sort={ariaSort("volume")} className="px-3 py-2 text-right">
+                    <button type="button" onClick={() => toggleSort("volume")} className={SORT_BTN}>Volume{arrow("volume")}</button>
+                  </th>
+                  <th scope="col" aria-sort={ariaSort("market_cap")} className="px-3 py-2 text-right">
+                    <button type="button" onClick={() => toggleSort("market_cap")} className={SORT_BTN}>Mkt Cap{arrow("market_cap")}</button>
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r, i) => {
                   const chg = r.change_pct;
                   const chgColor =
-                    chg == null ? "text-slate-500" : chg > 0 ? "text-emerald-400" : chg < 0 ? "text-red-400" : "text-slate-400";
+                    chg == null ? "text-slate-400" : chg > 0 ? "text-emerald-400" : chg < 0 ? "text-red-400" : "text-slate-400";
                   return (
                     <tr
                       key={r.ticker}
                       className="border-b border-[#1e2d4a]/60 last:border-0 hover:bg-[#0f1629] transition-colors"
                     >
-                      <td className="px-3 py-2 text-slate-600 font-mono">{i + 1}</td>
+                      <td className="px-3 py-2 text-slate-400 font-mono">{i + 1}</td>
                       <td className="px-3 py-2">
                         <a
                           href={`https://finance.yahoo.com/quote/${r.ticker}`}
@@ -227,7 +236,7 @@ export default function ScreenerView() {
                         </a>
                       </td>
                       <td className="px-3 py-2 text-slate-300 truncate max-w-[180px]">{r.company}</td>
-                      <td className="px-3 py-2 text-slate-500 hidden md:table-cell truncate max-w-[160px]">{r.sector}</td>
+                      <td className="px-3 py-2 text-slate-400 hidden md:table-cell truncate max-w-[160px]">{r.sector}</td>
                       <td className="px-3 py-2 text-right font-mono text-slate-200">{fmtPrice(r.price)}</td>
                       <td className={`px-3 py-2 text-right font-mono font-semibold ${chgColor}`}>{fmtPct(chg)}</td>
                       <td className="px-3 py-2 text-right font-mono text-slate-400">{fmtVolume(r.volume)}</td>

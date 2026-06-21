@@ -12,7 +12,7 @@ const BORDER: Record<string, string> = {
 const SENTIMENT: Record<string, { icon: string; cls: string }> = {
   bullish: { icon: "▲", cls: "text-emerald-400" },
   bearish: { icon: "▼", cls: "text-red-400" },
-  neutral: { icon: "◆", cls: "text-slate-500" },
+  neutral: { icon: "◆", cls: "text-slate-400" },
 };
 
 const TOPIC_COLOR: Record<string, string> = {
@@ -65,7 +65,7 @@ function SocialRow({
       {/* Platform dot + source name */}
       <div className="flex items-center gap-1.5 w-28 shrink-0 min-w-0">
         <PlatformDot source={item.source} />
-        <span className="text-[10px] text-slate-500 truncate font-mono leading-none">
+        <span className="text-[10px] text-slate-400 truncate font-mono leading-none">
           {shortSource(item.source)}
         </span>
       </div>
@@ -78,7 +78,7 @@ function SocialRow({
       {/* First topic (skip General — it adds no signal) */}
       {firstTopic && firstTopic !== "General" && (
         <span
-          className={`text-[10px] shrink-0 ${TOPIC_COLOR[firstTopic] ?? "text-slate-500"}`}
+          className={`text-[10px] shrink-0 ${TOPIC_COLOR[firstTopic] ?? "text-slate-400"}`}
         >
           {firstTopic}
         </span>
@@ -111,7 +111,7 @@ function SocialRow({
       </div>
 
       {/* Relative timestamp */}
-      <span className="text-[10px] text-slate-600 shrink-0 w-10 text-right tabular-nums">
+      <span className="text-[10px] text-slate-400 shrink-0 w-10 text-right tabular-nums">
         {formatDistanceToNow(item.published_at)}
       </span>
     </div>
@@ -134,7 +134,7 @@ interface SocialFeedProps {
 export default function SocialFeed({ items, scoringPending }: SocialFeedProps) {
   if (items.length === 0) {
     return (
-      <main className="flex-1 flex items-center justify-center text-slate-600 text-sm">
+      <main className="flex-1 flex items-center justify-center text-slate-400 text-sm">
         No social items yet.
       </main>
     );
@@ -144,10 +144,10 @@ export default function SocialFeed({ items, scoringPending }: SocialFeedProps) {
     <main className="flex-1 overflow-y-auto scrollbar-thin">
       {/* Column header */}
       <div className="flex items-center gap-3 pl-5 pr-4 py-1.5 border-b border-[#1e2d4a] sticky top-0 bg-[#0a0e1a] z-10">
-        <span className="w-28 shrink-0 text-[9px] uppercase tracking-widest text-slate-600">Source</span>
-        <span className="flex-1 text-[9px] uppercase tracking-widest text-slate-600">Message</span>
-        <span className="text-[9px] uppercase tracking-widest text-slate-600 w-14 text-right">Sentiment</span>
-        <span className="text-[9px] uppercase tracking-widest text-slate-600 w-10 text-right">Age</span>
+        <span className="w-28 shrink-0 text-[9px] uppercase tracking-widest text-slate-400">Source</span>
+        <span className="flex-1 text-[9px] uppercase tracking-widest text-slate-400">Message</span>
+        <span className="text-[9px] uppercase tracking-widest text-slate-400 w-14 text-right">Sentiment</span>
+        <span className="text-[9px] uppercase tracking-widest text-slate-400 w-10 text-right">Age</span>
       </div>
 
       {/* Rows */}

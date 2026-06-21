@@ -17,3 +17,43 @@ body {
 .scrollbar-thin::-webkit-scrollbar        { width: 4px; }
 .scrollbar-thin::-webkit-scrollbar-track  { background: transparent; }
 .scrollbar-thin::-webkit-scrollbar-thumb  { background: #1e2d4a; border-radius: 2px; }
+
+/* ── Accessibility (WCAG 2.1 AA) ─────────────────────────────────────────── */
+
+/* 2.4.7 Focus Visible — a clear keyboard focus ring on every interactive element. */
+:focus-visible {
+  outline: 2px solid #00d4aa;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* 2.4.1 Bypass Blocks — skip-to-content link, visible only when focused. */
+.skip-link {
+  position: absolute;
+  left: 0.5rem;
+  top: 0.5rem;
+  z-index: 100;
+  padding: 0.5rem 0.875rem;
+  background: #00d4aa;
+  color: #07101e;
+  font-weight: 600;
+  border-radius: 4px;
+  transform: translateY(-200%);
+  transition: transform 0.15s ease;
+}
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+/* 2.3.3 Animation from Interactions / 2.2.2 — honor the OS "reduce motion"
+   setting: stop the ticker marquee, pulses, and long transitions. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

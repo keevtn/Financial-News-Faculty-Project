@@ -39,7 +39,7 @@ function toggle<T>(set: Set<T>, value: T): Set<T> {
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="mb-5">
-      <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-2">
+      <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400 mb-2">
         {label}
       </p>
       <div className="space-y-1.5">{children}</div>
@@ -109,32 +109,34 @@ function SocialFilterSidebar({ filters, onChange, tickerCounts }: SidebarProps) 
   }
 
   return (
-    <aside className="w-52 shrink-0 bg-[#0a0e1a] border-r border-[#1e2d4a] overflow-y-auto scrollbar-thin py-4 px-3">
+    <aside aria-label="Social filters" className="w-52 shrink-0 bg-[#0a0e1a] border-r border-[#1e2d4a] overflow-y-auto scrollbar-thin py-4 px-3">
       {/* Search */}
       <div className="mb-5">
         <input
           type="text"
+          aria-label="Search posts"
           placeholder="Search posts…"
           value={filters.search}
           onChange={(e) => onChange({ ...filters, search: e.target.value })}
-          className="w-full bg-[#0f1629] border border-[#1e2d4a] rounded px-2.5 py-1.5 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-[#00d4aa] transition-colors"
+          className="w-full bg-[#0f1629] border border-[#1e2d4a] rounded px-2.5 py-1.5 text-xs text-slate-300 placeholder-slate-400 focus:outline-none focus:border-[#00d4aa] transition-colors"
         />
       </div>
 
       {/* Limit */}
       <div className="mb-5">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-2">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400 mb-2">
           Show recent
         </p>
         <div className="flex items-center gap-2">
           <input
             type="number"
             min={1}
+            aria-label="Show recent: number of posts to load"
             placeholder="100"
             value={pendingLimit}
             onChange={(e) => setPendingLimit(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && commitLimit()}
-            className="w-full bg-[#0f1629] border border-[#1e2d4a] rounded px-2.5 py-1.5 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-[#00d4aa] transition-colors"
+            className="w-full bg-[#0f1629] border border-[#1e2d4a] rounded px-2.5 py-1.5 text-xs text-slate-300 placeholder-slate-400 focus:outline-none focus:border-[#00d4aa] transition-colors"
           />
           <button
             onClick={commitLimit}
@@ -199,8 +201,9 @@ function SocialFilterSidebar({ filters, onChange, tickerCounts }: SidebarProps) 
               />
               <button
                 onClick={() => onChange({ ...filters, sentiments: new Set([s]) })}
+                aria-label={`Show only ${s} posts`}
                 title={`Show only ${s}`}
-                className="text-[9px] text-slate-600 hover:text-slate-400 transition-colors px-1 shrink-0"
+                className="text-[10px] text-slate-400 hover:text-[#00d4aa] transition-colors px-1 shrink-0"
               >
                 only
               </button>
@@ -211,7 +214,7 @@ function SocialFilterSidebar({ filters, onChange, tickerCounts }: SidebarProps) 
 
       <Section label="Tickers">
         {sortedTickers.length === 0 ? (
-          <p className="text-[10px] text-slate-600 italic">No tickers detected</p>
+          <p className="text-[10px] text-slate-400 italic">No tickers detected</p>
         ) : (
           sortedTickers.map(([ticker, count]) => (
             <FilterRow
@@ -223,7 +226,7 @@ function SocialFilterSidebar({ filters, onChange, tickerCounts }: SidebarProps) 
               label={
                 <span className="flex items-center gap-1.5">
                   <span className="font-mono text-sky-400 text-[10px]">{ticker}</span>
-                  <span className="text-slate-600 text-[10px]">({count})</span>
+                  <span className="text-slate-400 text-[10px]">({count})</span>
                 </span>
               }
             />
@@ -232,7 +235,7 @@ function SocialFilterSidebar({ filters, onChange, tickerCounts }: SidebarProps) 
         {filters.tickers.size > 0 && (
           <button
             onClick={() => onChange({ ...filters, tickers: new Set() })}
-            className="text-[10px] text-slate-600 hover:text-[#00d4aa] transition-colors pt-1"
+            className="text-[10px] text-slate-400 hover:text-[#00d4aa] transition-colors pt-1"
           >
             Clear ticker filter
           </button>
@@ -250,7 +253,7 @@ function SocialFilterSidebar({ filters, onChange, tickerCounts }: SidebarProps) 
             limit: 100,
           })
         }
-        className="w-full text-[11px] text-slate-600 hover:text-[#00d4aa] transition-colors py-1"
+        className="w-full text-[11px] text-slate-400 hover:text-[#00d4aa] transition-colors py-1"
       >
         Reset all filters
       </button>
@@ -319,19 +322,19 @@ function EmptyState() {
                   className={`ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded ${
                     src.status.startsWith("Live")
                       ? "text-[#00d4aa] bg-[#00d4aa]/10"
-                      : "text-slate-600 bg-[#1e2d4a]"
+                      : "text-slate-400 bg-[#1e2d4a]"
                   }`}
                 >
                   {src.status}
                 </span>
               </div>
-              <p className="text-[11px] text-slate-500 leading-snug">{src.sub}</p>
+              <p className="text-[11px] text-slate-400 leading-snug">{src.sub}</p>
             </div>
           ))}
         </div>
 
         <div className="rounded-lg border border-[#1e2d4a] bg-[#0f1629] px-5 py-4">
-          <p className="text-xs text-slate-500 leading-relaxed">
+          <p className="text-xs text-slate-400 leading-relaxed">
             <span className="text-slate-300 font-semibold">Run command</span> —{" "}
             from <code className="text-[10px] text-slate-400">backend/</code>:
           </p>

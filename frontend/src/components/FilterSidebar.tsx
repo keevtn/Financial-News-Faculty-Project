@@ -50,7 +50,7 @@ function toggle<T>(set: Set<T>, value: T): Set<T> {
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="mb-5">
-      <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-2">
+      <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400 mb-2">
         {label}
       </p>
       <div className="space-y-1.5">{children}</div>
@@ -114,32 +114,34 @@ export default function FilterSidebar({ filters, onChange, tickerCounts }: Filte
     }
   }
   return (
-    <aside className="w-52 shrink-0 bg-[#0a0e1a] border-r border-[#1e2d4a] overflow-y-auto scrollbar-thin py-4 px-3">
+    <aside aria-label="News filters" className="w-52 shrink-0 bg-[#0a0e1a] border-r border-[#1e2d4a] overflow-y-auto scrollbar-thin py-4 px-3">
       {/* Search */}
       <div className="mb-5">
         <input
           type="text"
+          aria-label="Search headlines"
           placeholder="Search headlines…"
           value={filters.search}
           onChange={(e) => onChange({ ...filters, search: e.target.value })}
-          className="w-full bg-[#0f1629] border border-[#1e2d4a] rounded px-2.5 py-1.5 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-[#00d4aa] transition-colors"
+          className="w-full bg-[#0f1629] border border-[#1e2d4a] rounded px-2.5 py-1.5 text-xs text-slate-300 placeholder-slate-400 focus:outline-none focus:border-[#00d4aa] transition-colors"
         />
       </div>
 
       {/* Limit */}
       <div className="mb-5">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-2">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400 mb-2">
           Show recent
         </p>
         <div className="flex items-center gap-2">
           <input
             type="number"
             min={1}
+            aria-label="Show recent: number of articles to load"
             placeholder="100"
             value={pendingLimit}
             onChange={(e) => setPendingLimit(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && commitLimit()}
-            className="w-full bg-[#0f1629] border border-[#1e2d4a] rounded px-2.5 py-1.5 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-[#00d4aa] transition-colors"
+            className="w-full bg-[#0f1629] border border-[#1e2d4a] rounded px-2.5 py-1.5 text-xs text-slate-300 placeholder-slate-400 focus:outline-none focus:border-[#00d4aa] transition-colors"
           />
           <button
             onClick={commitLimit}
@@ -213,8 +215,9 @@ export default function FilterSidebar({ filters, onChange, tickerCounts }: Filte
               />
               <button
                 onClick={() => onChange({ ...filters, sentiments: new Set([s]) })}
+                aria-label={`Show only ${s} items`}
                 title={`Show only ${s}`}
-                className="text-[9px] text-slate-600 hover:text-slate-400 transition-colors px-1 shrink-0"
+                className="text-[10px] text-slate-400 hover:text-[#00d4aa] transition-colors px-1 shrink-0"
               >
                 only
               </button>
@@ -225,7 +228,7 @@ export default function FilterSidebar({ filters, onChange, tickerCounts }: Filte
 
       <Section label="Tickers">
         {sortedTickers.length === 0 ? (
-          <p className="text-[10px] text-slate-600 italic">No tickers detected</p>
+          <p className="text-[10px] text-slate-400 italic">No tickers detected</p>
         ) : (
           sortedTickers.map(([ticker, count]) => (
             <FilterRow
@@ -237,7 +240,7 @@ export default function FilterSidebar({ filters, onChange, tickerCounts }: Filte
               label={
                 <span className="flex items-center gap-1.5">
                   <span className="font-mono text-sky-400 text-[10px]">{ticker}</span>
-                  <span className="text-slate-600 text-[10px]">({count})</span>
+                  <span className="text-slate-400 text-[10px]">({count})</span>
                 </span>
               }
             />
@@ -246,7 +249,7 @@ export default function FilterSidebar({ filters, onChange, tickerCounts }: Filte
         {filters.tickers.size > 0 && (
           <button
             onClick={() => onChange({ ...filters, tickers: new Set() })}
-            className="text-[10px] text-slate-600 hover:text-[#00d4aa] transition-colors pt-1"
+            className="text-[10px] text-slate-400 hover:text-[#00d4aa] transition-colors pt-1"
           >
             Clear ticker filter
           </button>
@@ -265,7 +268,7 @@ export default function FilterSidebar({ filters, onChange, tickerCounts }: Filte
             limit: 100,
           })
         }
-        className="w-full text-[11px] text-slate-600 hover:text-[#00d4aa] transition-colors py-1"
+        className="w-full text-[11px] text-slate-400 hover:text-[#00d4aa] transition-colors py-1"
       >
         Reset all filters
       </button>

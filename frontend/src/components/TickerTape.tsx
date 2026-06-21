@@ -11,6 +11,7 @@ interface TickerTapeProps {
 export default function TickerTape({ symbols, pollIntervalMs = 60_000 }: TickerTapeProps) {
   const [prices, setPrices] = useState<Record<string, TickerPrice>>({});
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [paused, setPaused] = useState(false);
 
   // Stable dep key — re-fetches immediately when the symbol set changes
   const symbolsKey = useMemo(() => [...symbols].sort().join(","), [symbols]);
@@ -48,11 +49,24 @@ export default function TickerTape({ symbols, pollIntervalMs = 60_000 }: TickerT
   const chips = [...ready, ...ready];
 
   return (
-    <div className="bg-[#080e1a] border-b border-[#1e2d4a] overflow-hidden shrink-0 h-8 flex items-center relative">
+    <section
+      aria-label="Live ticker prices"
+      className="bg-[#080e1a] border-b border-[#1e2d4a] overflow-hidden shrink-0 h-8 flex items-center relative"
+    >
+      {/* WCAG 2.2.2 — let users stop the auto-scrolling motion. */}
+      <button
+        type="button"
+        onClick={() => setPaused((v) => !v)}
+        aria-label={paused ? "Resume scrolling ticker" : "Pause scrolling ticker"}
+        className="absolute left-1.5 z-20 text-[11px] leading-none text-slate-400 hover:text-[#00d4aa] bg-[#080e1a] px-1 py-1 rounded"
+      >
+        <span aria-hidden="true">{paused ? "▶" : "❚❚"}</span>
+      </button>
       <div
-        className="flex whitespace-nowrap"
+        className="flex whitespace-nowrap pl-7"
         style={{
           animation: `ticker-scroll ${durationSec}s linear infinite`,
+          animationPlayState: paused ? "paused" : "running",
           width: "max-content",
         }}
       >
@@ -61,17 +75,19 @@ export default function TickerTape({ symbols, pollIntervalMs = 60_000 }: TickerT
           const up = (p?.change ?? 0) >= 0;
           const color = up ? "text-emerald-400" : "text-red-400";
           const arrow = up ? "▲" : "▼";
+          const pct = p.change_pct ?? 0;
           return (
             <span
               key={`${sym}-${i}`}
+              aria-hidden={i >= ready.length ? "true" : undefined}
               className="inline-flex items-center gap-1.5 px-4 text-[11px] font-mono"
             >
               <span className="text-slate-300 font-semibold tracking-wide">{sym}</span>
               <span className="text-slate-100">${p.price!.toFixed(2)}</span>
               <span className={`${color} font-medium`}>
-                {arrow} {Math.abs(p.change_pct ?? 0).toFixed(2)}%
+                <span aria-hidden="true">{arrow}</span> {pct >= 0 ? "+" : ""}{pct.toFixed(2)}%
               </span>
-              <span className="text-[#1e2d4a] select-none ml-2">|</span>
+              <span aria-hidden="true" className="text-[#1e2d4a] select-none ml-2">|</span>
             </span>
           );
         })}
@@ -82,10 +98,11 @@ export default function TickerTape({ symbols, pollIntervalMs = 60_000 }: TickerT
       <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-[#080e1a] to-transparent" />
 
       {lastUpdated && (
-        <span className="absolute right-3 text-[9px] text-slate-600 font-mono shrink-0 z-10">
+        <span className="absolute right-3 text-[10px] text-slate-400 font-mono shrink-0 z-10">
+          <span className="sr-only">Prices updated </span>
           {lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
         </span>
       )}
-    </div>
+    </section>
   );
 }

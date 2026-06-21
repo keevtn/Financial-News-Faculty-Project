@@ -20,17 +20,17 @@ export default function StatsBar({ items }: StatsBarProps) {
       <span className="flex items-center gap-1.5 text-emerald-400">
         <span>▲</span>
         <span className="font-semibold uppercase tracking-wider">Bullish</span>
-        <span className="text-slate-500">{counts.bullish}</span>
+        <span className="text-slate-400">{counts.bullish}</span>
       </span>
       <span className="flex items-center gap-1.5 text-red-400">
         <span>▼</span>
         <span className="font-semibold uppercase tracking-wider">Bearish</span>
-        <span className="text-slate-500">{counts.bearish}</span>
+        <span className="text-slate-400">{counts.bearish}</span>
       </span>
       <span className="flex items-center gap-1.5 text-slate-400">
         <span>◆</span>
         <span className="font-semibold uppercase tracking-wider">Neutral</span>
-        <span className="text-slate-500">{counts.neutral}</span>
+        <span className="text-slate-400">{counts.neutral}</span>
       </span>
 
       {/* sentiment bar */}
@@ -50,7 +50,7 @@ export default function StatsBar({ items }: StatsBarProps) {
           />
         </div>
       </div>
-      <span className="text-slate-500 ml-auto">{bullPct}% bullish</span>
+      <span className="text-slate-400 ml-auto">{bullPct}% bullish</span>
     </div>
   );
 }
