@@ -64,8 +64,15 @@ export default function HomePage() {
     let cancelled = false;
 
     async function load() {
-      const fetched = await fetchNews(filters.limit ?? 100);
+      // Fetch the two feeds independently so each tab's "Show recent" actually
+      // controls its own count — a shared fetch lets high-volume social crowd
+      // structured (RSS) out of the recency window.
+      const [structured, social] = await Promise.all([
+        fetchNews(filters.limit ?? 100, "structured"),
+        fetchNews(socialFilters.limit ?? 100, "social"),
+      ]);
       if (cancelled) return;
+      const fetched = [...structured, ...social];
       setItems(fetched);
 
       // Run structured and social scoring in parallel so structured-scoring
@@ -151,7 +158,7 @@ export default function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, [filters.limit]);
+  }, [filters.limit, socialFilters.limit]);
 
   // All unique tickers from all articles (structured + social), sorted by mention frequency.
   // Used by the ticker tape — independent of filter state so the tape is stable.

@@ -59,7 +59,7 @@ async def list_news(
     request: Request,
     limit: int = Query(default=100, ge=1, le=500, description="Max RSS/social items to return"),
     offset: int = Query(default=0, ge=0, description="Pagination offset"),
-    source_type: Optional[str] = Query(default=None, description="Filter: rss | sec | fda | social"),
+    source_type: Optional[str] = Query(default=None, description="Filter: rss | sec | fda | social | structured (=rss+sec+fda)"),
     topic: Optional[str] = Query(default=None, description="Filter by topic label"),
     search: Optional[str] = Query(default=None, description="Keyword search in title + description"),
     sec_limit: int = Query(default=25, ge=0, le=100, description="Guaranteed minimum SEC items regardless of recency"),
@@ -85,9 +85,14 @@ async def list_news(
     if collection is None:
         return {"items": [], "total": 0, "limit": limit, "offset": offset}
 
-    # Base filter shared by all queries
+    # Base filter shared by all queries. "structured" is a convenience alias for
+    # the non-social types so the Structured tab can fetch independently of the
+    # high-volume social feed (which otherwise crowds RSS out of a shared window).
+    is_structured = source_type == "structured"
     query: dict[str, Any] = {}
-    if source_type:
+    if is_structured:
+        query["source_type"] = {"$in": ["rss", "sec", "fda"]}
+    elif source_type:
         query["source_type"] = source_type
     if topic:
         query["topic"] = {"$regex": re.escape(topic), "$options": "i"}
@@ -98,12 +103,14 @@ async def list_news(
             {"description": {"$regex": safe, "$options": "i"}},
         ]
 
-    # Only apply guaranteed-minimum fetches when no explicit source_type filter.
-    # If the caller already said source_type=rss, injecting SEC docs would be wrong.
-    run_sec = not source_type and sec_limit > 0
-    run_fda = not source_type and fda_limit > 0
-    run_social = not source_type and social_limit > 0
-    run_rss = not source_type and rss_limit > 0
+    # Guaranteed-minimum fetches. On the unfiltered combined feed, guarantee every
+    # type. On the "structured" feed, still guarantee low-volume SEC/FDA (RSS would
+    # otherwise bury them) but not social/rss. Skipped for a single explicit
+    # source_type (rss|sec|fda|social) — the caller already knows what it wants.
+    run_sec = (not source_type or is_structured) and sec_limit > 0
+    run_fda = (not source_type or is_structured) and fda_limit > 0
+    run_social = (not source_type) and social_limit > 0
+    run_rss = (not source_type) and rss_limit > 0
 
     # Run main query + guaranteed-type queries in parallel
     coros: list[Any] = [

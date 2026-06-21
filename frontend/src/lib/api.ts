@@ -11,22 +11,38 @@ export interface TickerPrice {
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK !== "false";
 
+export type FeedSourceType = "structured" | "social";
+
+function filterMock(sourceType?: FeedSourceType): NewsItem[] {
+  if (sourceType === "social") return MOCK_NEWS.filter((i) => i.source_type === "social");
+  if (sourceType === "structured") return MOCK_NEWS.filter((i) => i.source_type !== "social");
+  return MOCK_NEWS;
+}
+
+/**
+ * Fetch news items. Pass `sourceType` so the Structured and Social tabs each
+ * query their own feed independently — otherwise the high-volume social feed
+ * crowds RSS out of a shared recency window (and "Show recent" stops mattering
+ * for structured). "structured" = rss+sec+fda server-side.
+ */
 export async function fetchNews(
   limit: number | null = 100,
+  sourceType?: FeedSourceType,
   secLimit = 25,
   fdaLimit = 25,
 ): Promise<NewsItem[]> {
   try {
     const params = new URLSearchParams({ sec_limit: String(secLimit), fda_limit: String(fdaLimit) });
     if (limit !== null) params.set("limit", String(limit));
+    if (sourceType) params.set("source_type", sourceType);
     const res = await fetch(`${API_BASE}/api/news/?${params}`);
-    if (!res.ok) return MOCK_NEWS;
+    if (!res.ok) return filterMock(sourceType);
     const data = await res.json();
     // Fall back to mock data if MongoDB has no items yet
-    if (!data.items?.length) return MOCK_NEWS;
+    if (!data.items?.length) return filterMock(sourceType);
     return data.items as NewsItem[];
   } catch {
-    return MOCK_NEWS;
+    return filterMock(sourceType);
   }
 }
 
