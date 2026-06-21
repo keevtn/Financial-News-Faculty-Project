@@ -9,6 +9,7 @@ import {
   fetchScreenerPresets,
 } from "@/lib/api";
 import { formatDistanceToNow } from "@/lib/time";
+import ChartIconButton from "./ChartIconButton";
 
 // Shown before /presets responds (and if it fails).
 const FALLBACK_PRESETS: ScreenerPreset[] = [
@@ -226,14 +227,17 @@ export default function ScreenerView() {
                     >
                       <td className="px-3 py-2 text-slate-400 font-mono">{i + 1}</td>
                       <td className="px-3 py-2">
-                        <a
-                          href={`https://finance.yahoo.com/quote/${r.ticker}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="font-mono font-bold text-sky-400 hover:text-[#00d4aa] transition-colors"
-                        >
-                          {r.ticker}
-                        </a>
+                        <span className="inline-flex items-center gap-1.5">
+                          <a
+                            href={`https://finance.yahoo.com/quote/${r.ticker}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-mono font-bold text-sky-400 hover:text-[#00d4aa] transition-colors"
+                          >
+                            {r.ticker}
+                          </a>
+                          <ChartIconButton ticker={r.ticker} />
+                        </span>
                       </td>
                       <td className="px-3 py-2 text-slate-300 truncate max-w-[180px]">{r.company}</td>
                       <td className="px-3 py-2 text-slate-400 hidden md:table-cell truncate max-w-[160px]">{r.sector}</td>
