@@ -26,12 +26,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Security
 from fastapi.security.api_key import APIKeyHeader
 
 from catalyst_ranker import (
-    grade_ranking,
     get_latest_ranking,
+    grade_run,
     rank_catalysts,
     save_ranking,
 )
-from market_calendar import next_session_bounds
 from middleware.limiter import limiter
 
 log = logging.getLogger("middleware.routes.catalyst")
@@ -85,6 +84,52 @@ async def runs(
     return {"runs": docs}
 
 
+@router.get("/track-record")
+@limiter.limit("60/minute")
+async def track_record(
+    request: Request,
+    limit: int = Query(default=60, ge=1, le=200),
+) -> dict[str, Any]:
+    """
+    The catalyst ranker's measured performance: aggregate grade metrics across
+    graded runs, plus the per-run series for charting. Public read.
+
+    - direction_hit_rate: share of non-neutral calls that moved the called way.
+    - reaction_separation: avg |move| of the top half minus the bottom half — did
+      the ranking actually surface the bigger movers? (>0 = yes.)
+    """
+    coll = _rankings_collection(request)
+    projection = {
+        "_id": 0, "run_id": 1, "generated_at": 1, "used_llm": 1,
+        "metrics.graded": 1, "metrics.direction_hit_rate": 1,
+        "metrics.reaction_separation": 1, "metrics.session_close": 1,
+    }
+    docs = await (
+        coll.find({"metrics": {"$exists": True}}, projection)
+        .sort("generated_at", -1).limit(limit).to_list(length=limit)
+    )
+    graded = [d for d in docs if (d.get("metrics") or {}).get("graded")]
+    hit = [d["metrics"]["direction_hit_rate"] for d in graded
+           if d["metrics"].get("direction_hit_rate") is not None]
+    sep = [d["metrics"]["reaction_separation"] for d in graded
+           if d["metrics"].get("reaction_separation") is not None]
+
+    summary = {
+        "graded_runs": len(graded),
+        "avg_direction_hit_rate": round(sum(hit) / len(hit), 3) if hit else None,
+        "avg_reaction_separation": round(sum(sep) / len(sep), 5) if sep else None,
+        "positive_separation_rate": round(sum(1 for s in sep if s > 0) / len(sep), 3) if sep else None,
+    }
+    runs = [{
+        "run_id": d.get("run_id"),
+        "generated_at": d.get("generated_at"),
+        "used_llm": d.get("used_llm"),
+        "direction_hit_rate": (d.get("metrics") or {}).get("direction_hit_rate"),
+        "reaction_separation": (d.get("metrics") or {}).get("reaction_separation"),
+    } for d in docs]
+    return {"summary": summary, "runs": runs}
+
+
 @router.post("/run", dependencies=[Depends(_require_key)])
 @limiter.limit("6/hour")
 async def run(
@@ -110,61 +155,26 @@ async def run(
     return {"ranking": result}
 
 
-def _fetch_session_prices_sync(tickers: list[str], start: datetime, end: datetime) -> dict[str, dict[str, float]]:
-    """
-    Pull daily open/close for ``tickers`` for the session covering [start, end].
-    Synchronous (yfinance) — call via asyncio.to_thread.
-    """
-    import yfinance as yf
-
-    out: dict[str, dict[str, float]] = {}
-    # yfinance end is exclusive; pad a day so the session bar is included.
-    hist_start = start.date().isoformat()
-    hist_end = (end.date().fromordinal(end.date().toordinal() + 1)).isoformat()
-    for sym in tickers:
-        try:
-            df = yf.Ticker(sym).history(start=hist_start, end=hist_end, interval="1d")
-            if df is None or df.empty:
-                continue
-            row = df.iloc[0]
-            out[sym] = {"open": float(row["Open"]), "close": float(row["Close"])}
-        except Exception as exc:  # noqa: BLE001
-            log.warning("price fetch failed for %s: %s", sym, exc)
-    return out
-
-
 @router.post("/grade/{run_id}", dependencies=[Depends(_require_key)])
 @limiter.limit("20/hour")
 async def grade(request: Request, run_id: str) -> dict[str, Any]:
     """
     Score a past run against the realized open->close move of the session that
     followed it (direction-agnostic reaction check + directional hit-rate).
-    Persists the metrics back onto the run document.
+    Persists the metrics back onto the run document. Shares ``grade_run`` with
+    the auto-grade scheduler.
     """
-    import asyncio
-
     coll = _rankings_collection(request)
     run_doc = await coll.find_one({"run_id": run_id}, {"_id": 0})
     if run_doc is None:
         raise HTTPException(status_code=404, detail="run_id not found")
-
-    generated_at = run_doc.get("generated_at")
-    if not isinstance(generated_at, datetime):
+    if not isinstance(run_doc.get("generated_at"), datetime):
         raise HTTPException(status_code=400, detail="run has no usable timestamp")
 
-    sess_open, sess_close = next_session_bounds(generated_at)
-    now = datetime.now(tz=timezone.utc)
-    if now < sess_close:
+    metrics = await grade_run(coll, run_doc)
+    if metrics is None:
         raise HTTPException(
             status_code=409,
             detail="next session has not closed yet — nothing to grade",
         )
-
-    tickers = [it["ticker"] for it in run_doc.get("items", [])]
-    prices = await asyncio.to_thread(_fetch_session_prices_sync, tickers, sess_open, sess_close)
-    metrics = grade_ranking(run_doc, prices)
-    metrics["session_open"] = sess_open.isoformat()
-    metrics["session_close"] = sess_close.isoformat()
-
-    await coll.update_one({"run_id": run_id}, {"$set": {"metrics": metrics}})
     return {"run_id": run_id, "metrics": metrics}

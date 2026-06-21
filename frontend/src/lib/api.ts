@@ -172,6 +172,33 @@ export async function fetchLatestCatalystRanking(): Promise<CatalystRanking | nu
   }
 }
 
+export interface CatalystTrackRecord {
+  summary: {
+    graded_runs: number;
+    avg_direction_hit_rate: number | null;   // 0..1
+    avg_reaction_separation: number | null;   // signed return delta (top half vs bottom)
+    positive_separation_rate: number | null;  // 0..1
+  };
+  runs: Array<{
+    run_id: string;
+    generated_at: string;
+    used_llm: boolean;
+    direction_hit_rate: number | null;
+    reaction_separation: number | null;
+  }>;
+}
+
+/** The catalyst ranker's measured performance across graded runs (public read). */
+export async function fetchCatalystTrackRecord(): Promise<CatalystTrackRecord | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/catalyst/track-record`);
+    if (!res.ok) return null;
+    return (await res.json()) as CatalystTrackRecord;
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Numeric screener — market-wide movers from Finviz (read-only)
 // ---------------------------------------------------------------------------

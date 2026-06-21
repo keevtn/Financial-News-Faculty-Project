@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import {
   CatalystItem,
   CatalystRanking,
+  CatalystTrackRecord,
   Direction,
+  fetchCatalystTrackRecord,
   fetchLatestCatalystRanking,
 } from "@/lib/api";
 import { formatDistanceToNow } from "@/lib/time";
@@ -207,16 +209,81 @@ function CatalystCard({ item }: { item: CatalystItem }) {
   );
 }
 
+// ── Track record ──────────────────────────────────────────────────────────────
+
+function Stat({
+  label, value, hint, tone,
+}: { label: string; value: string; hint: string; tone?: "good" | "bad" }) {
+  const color = tone === "good" ? "text-emerald-400" : tone === "bad" ? "text-red-400" : "text-slate-200";
+  return (
+    <div>
+      <div className={`text-lg font-bold font-mono leading-none ${color}`}>{value}</div>
+      <div className="text-[10px] text-slate-400 mt-1">{label}</div>
+      <div className="text-[9px] text-slate-600 leading-tight">{hint}</div>
+    </div>
+  );
+}
+
+function TrackRecordPanel({ tr }: { tr: CatalystTrackRecord }) {
+  const s = tr.summary;
+  const pct = (n: number | null) => (n == null ? "—" : `${(n * 100).toFixed(0)}%`);
+
+  return (
+    <div className="max-w-3xl mx-auto mb-4 bg-[#0f1629] border border-[#1e2d4a] rounded-lg px-4 py-3">
+      <div className="flex items-center justify-between mb-2.5">
+        <span className="text-[10px] uppercase tracking-widest text-slate-500">Track Record</span>
+        <span className="text-[10px] text-slate-500">
+          {s.graded_runs} graded run{s.graded_runs === 1 ? "" : "s"}
+        </span>
+      </div>
+      {s.graded_runs === 0 ? (
+        <p className="text-xs text-slate-500 leading-relaxed">
+          No graded runs yet — performance appears automatically once a ranked
+          session closes and is graded against realized open→close moves.
+        </p>
+      ) : (
+        <div className="grid grid-cols-3 gap-4">
+          <Stat
+            label="Direction hit-rate"
+            value={pct(s.avg_direction_hit_rate)}
+            hint="calls that moved the called way"
+          />
+          <Stat
+            label="Reaction separation"
+            value={
+              s.avg_reaction_separation == null
+                ? "—"
+                : `${s.avg_reaction_separation > 0 ? "+" : ""}${(s.avg_reaction_separation * 100).toFixed(2)}%`
+            }
+            hint="top-half vs bottom-half |move|"
+            tone={s.avg_reaction_separation == null ? undefined : s.avg_reaction_separation > 0 ? "good" : "bad"}
+          />
+          <Stat
+            label="Runs w/ + separation"
+            value={pct(s.positive_separation_rate)}
+            hint="ranked the bigger movers higher"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main view ─────────────────────────────────────────────────────────────────
 
 export default function CatalystView() {
   const [ranking, setRanking] = useState<CatalystRanking | null>(null);
+  const [trackRecord, setTrackRecord] = useState<CatalystTrackRecord | null>(null);
   const [loading, setLoading] = useState(true);
 
   async function load() {
     setLoading(true);
-    const r = await fetchLatestCatalystRanking();
+    const [r, tr] = await Promise.all([
+      fetchLatestCatalystRanking(),
+      fetchCatalystTrackRecord(),
+    ]);
     setRanking(r);
+    setTrackRecord(tr);
     setLoading(false);
   }
 
@@ -271,6 +338,7 @@ export default function CatalystView() {
 
       {/* body */}
       <div className="p-6">
+        {trackRecord && <TrackRecordPanel tr={trackRecord} />}
         {loading && !ranking ? (
           <p className="text-sm text-slate-500">Loading latest ranking…</p>
         ) : !ranking ? (

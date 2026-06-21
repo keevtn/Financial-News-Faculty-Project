@@ -103,6 +103,14 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         log.error("Failed to start in-process ingestion: %s", exc)
 
+    # Catalyst scheduler (only when RUN_CATALYST_SCHEDULER=true). Auto-runs the
+    # ranker pre-market and auto-grades closed runs to bank a track record.
+    try:
+        from middleware.catalyst_scheduler import start_catalyst_scheduler
+        await start_catalyst_scheduler(app)
+    except Exception as exc:
+        log.error("Failed to start catalyst scheduler: %s", exc)
+
     yield
 
     try:
@@ -110,6 +118,12 @@ async def lifespan(app: FastAPI):
         await stop_ingestion(app)
     except Exception as exc:
         log.error("Failed to stop in-process ingestion: %s", exc)
+
+    try:
+        from middleware.catalyst_scheduler import stop_catalyst_scheduler
+        await stop_catalyst_scheduler(app)
+    except Exception as exc:
+        log.error("Failed to stop catalyst scheduler: %s", exc)
 
     if getattr(app.state, "mongo_client", None):
         app.state.mongo_client.close()

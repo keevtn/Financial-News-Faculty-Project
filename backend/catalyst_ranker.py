@@ -33,6 +33,7 @@ ranking logic is unit-testable without a database or network.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
@@ -773,3 +774,62 @@ def grade_ranking(
         "direction_hit_rate": round(hit_rate, 3) if hit_rate is not None else None,
         "per_ticker": graded,
     }
+
+
+def _fetch_session_prices_sync(
+    tickers: list[str], start: datetime, end: datetime
+) -> dict[str, dict[str, float]]:
+    """
+    Pull daily open/close for ``tickers`` for the session covering [start, end].
+    Synchronous (yfinance) — call via ``asyncio.to_thread``.
+    """
+    import yfinance as yf
+
+    out: dict[str, dict[str, float]] = {}
+    hist_start = start.date().isoformat()
+    hist_end = (end.date() + timedelta(days=1)).isoformat()  # yfinance end is exclusive
+    for sym in tickers:
+        try:
+            df = yf.Ticker(sym).history(start=hist_start, end=hist_end, interval="1d")
+            if df is None or df.empty:
+                continue
+            row = df.iloc[0]
+            out[sym] = {"open": float(row["Open"]), "close": float(row["Close"])}
+        except Exception as exc:  # noqa: BLE001
+            log.warning("price fetch failed for %s: %s", sym, exc)
+    return out
+
+
+async def grade_run(
+    rankings_collection: Any,
+    run_doc: dict[str, Any],
+    *,
+    now: Optional[datetime] = None,
+) -> Optional[dict[str, Any]]:
+    """
+    Grade one persisted run against the realized open->close move of the session
+    that followed it, and persist the metrics onto the run document.
+
+    Returns the metrics dict, or ``None`` if the run can't be graded yet (no
+    usable timestamp, or the next session hasn't closed). Shared by the manual
+    ``POST /grade`` endpoint and the auto-grade scheduler.
+    """
+    now = now or datetime.now(tz=timezone.utc)
+    generated_at = run_doc.get("generated_at")
+    if not isinstance(generated_at, datetime):
+        return None
+
+    sess_open, sess_close = next_session_bounds(generated_at)
+    if now < sess_close:
+        return None  # the session being graded hasn't closed yet
+
+    tickers = [it["ticker"] for it in run_doc.get("items", [])]
+    prices = await asyncio.to_thread(_fetch_session_prices_sync, tickers, sess_open, sess_close)
+    metrics = grade_ranking(run_doc, prices)
+    metrics["session_open"] = sess_open.isoformat()
+    metrics["session_close"] = sess_close.isoformat()
+
+    await rankings_collection.update_one(
+        {"run_id": run_doc["run_id"]}, {"$set": {"metrics": metrics}}
+    )
+    return metrics
