@@ -124,7 +124,10 @@ export default function ScreenerView() {
         <div className="flex flex-col">
           <h2 className="text-sm font-bold text-slate-100">Market Screener</h2>
           <span className="text-[10px] text-slate-400">
-            Market-wide movers by market cap, change, and volume · via Yahoo Finance (delayed)
+            Market-wide movers by market cap, change, and volume ·{" "}
+            {result?.source === "finviz_elite"
+              ? "via Finviz Elite (real-time)"
+              : "via Yahoo Finance (delayed)"}
           </span>
         </div>
 

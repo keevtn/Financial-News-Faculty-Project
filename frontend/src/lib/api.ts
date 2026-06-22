@@ -301,7 +301,8 @@ export interface ScreenerResult {
   rows: ScreenerRow[];
   count: number;
   preset: string;
-  status: string | null;     // non-null only when Finviz was unreachable/unparseable
+  status: string | null;     // non-null only when the source was unreachable/unparseable
+  source?: string;           // "finviz_elite" | "yahoo"
   cached: boolean;
   fetched_at?: number;
 }
