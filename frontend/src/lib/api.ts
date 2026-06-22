@@ -213,6 +213,17 @@ export interface CatalystItem {
   abnormal_attention: number;
   market_cap: number | null;
   size_factor: number;
+  // Pre-market move from Finviz Elite (null when Elite isn't configured or the
+  // ticker had no usable pre-market data). gap_pct = signed % vs prev close;
+  // rel_volume = relative-volume ratio (>1 = heavier than normal).
+  premarket: {
+    gap_pct: number | null;
+    rel_volume: number | null;
+    price: number | null;
+    prev_close: number | null;
+    change_pct: number | null;
+  } | null;
+  confirmation_factor: number;  // pre-market boost applied to the pre-score (1.0–1.2)
   pre_score: number;
   sample_articles: CatalystArticle[];
   llm_subscores: {

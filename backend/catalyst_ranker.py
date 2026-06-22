@@ -103,6 +103,31 @@ def _size_factor(market_cap: Optional[float]) -> float:
             return factor
     return 1.0
 
+
+# Pre-market "confirmation factor": a BOOST-ONLY multiplier on the pre-score.
+# The strongest evidence a closed-market catalyst is real is the stock already
+# moving on it before the open — *and on heavy volume* (a gap on no volume is a
+# thin print, not conviction). It can only raise a candidate's priority for the
+# expensive LLM deep-read, never bury a genuine news catalyst that simply hasn't
+# started moving yet (many move at the open, not pre-market), so the floor is
+# 1.0. Magnitude × volume, each saturating; direction is left to the LLM (which
+# also sees the pre-market line) and to grading.
+_GAP_SAT = 8.0        # |gap %| at which the magnitude term maxes out
+_REL_VOL_SAT = 2.0    # relative volume at which the volume gate maxes out
+_CONFIRM_WEIGHT = 0.20  # max boost (+20%) at full magnitude AND full volume
+
+
+def _confirmation_factor(
+    gap_pct: Optional[float], rel_volume: Optional[float]
+) -> float:
+    """Pre-market boost in [1.0, 1.20]; 1.0 when there's no pre-market data."""
+    if gap_pct is None:
+        return 1.0
+    mag = min(abs(gap_pct) / _GAP_SAT, 1.0)
+    # Unknown volume -> half credit (we have a move but can't confirm conviction).
+    vol = 0.5 if rel_volume is None else max(0.0, min(rel_volume / _REL_VOL_SAT, 1.0))
+    return round(1.0 + _CONFIRM_WEIGHT * mag * vol, 4)
+
 _STOPWORDS: frozenset[str] = frozenset({
     "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "with",
     "at", "by", "from", "as", "is", "are", "be", "after", "amid", "over",
@@ -128,6 +153,8 @@ class CandidateFeatures:
     credibility: float = 1.0         # max per-source credibility seen
     market_cap: Optional[float] = None  # USD market cap (Finviz); None if unknown
     size_factor: float = 1.0         # size multiplier applied to the pre-score
+    premarket: Optional[dict[str, Any]] = None  # {gap_pct, rel_volume, ...} or None
+    confirmation_factor: float = 1.0  # pre-market boost applied to the pre-score
     pre_score: float = 0.0           # composite, 0..100
     components: dict[str, float] = field(default_factory=dict)
     sample_articles: list[dict[str, Any]] = field(default_factory=list)
@@ -301,6 +328,7 @@ def score_candidates(
     min_sources: int = 2,
     weights: Optional[dict[str, float]] = None,
     market_caps: Optional[dict[str, float]] = None,
+    premarket: Optional[dict[str, dict[str, Any]]] = None,
 ) -> list[CandidateFeatures]:
     """
     Apply the volume floor and compute the transparent composite pre-score.
@@ -313,14 +341,17 @@ def score_candidates(
       sentiment   — magnitude of aggregate sentiment (direction-agnostic)
       materiality — best source-type weight (SEC/FDA > RSS)
 
-    then multiplied by a per-source credibility factor and a market-cap size
-    factor (``market_caps`` maps ticker -> USD market cap; absent/None -> 1.0,
-    so omitting it preserves the original size-neutral behaviour).
+    then multiplied by a per-source credibility factor, a market-cap size factor
+    (``market_caps`` maps ticker -> USD market cap; absent/None -> 1.0), and a
+    pre-market confirmation factor (``premarket`` maps ticker -> {gap_pct,
+    rel_volume, ...}; absent/None -> 1.0). Omitting either map preserves the
+    original behaviour, so the function stays pure and unit-testable offline.
     """
     w = {"attention": 0.30, "abnormal": 0.25, "sentiment": 0.25, "materiality": 0.20}
     if weights:
         w.update(weights)
     caps = market_caps or {}
+    pm = premarket or {}
 
     qualified = [c for c in candidates if c.n_sources >= min_sources]
     for c in qualified:
@@ -334,12 +365,18 @@ def score_candidates(
         size_factor = _size_factor(c.market_cap)
         c.size_factor = size_factor
 
+        c.premarket = pm.get(c.ticker)
+        gap_pct = c.premarket.get("gap_pct") if c.premarket else None
+        rel_volume = c.premarket.get("rel_volume") if c.premarket else None
+        confirmation_factor = _confirmation_factor(gap_pct, rel_volume)
+        c.confirmation_factor = confirmation_factor
+
         composite = (
             w["attention"] * attention
             + w["abnormal"] * abnormal
             + w["sentiment"] * sentiment
             + w["materiality"] * materiality
-        ) * credibility_factor * size_factor
+        ) * credibility_factor * size_factor * confirmation_factor
 
         c.components = {
             "attention": round(attention, 4),
@@ -348,6 +385,7 @@ def score_candidates(
             "materiality": round(materiality, 4),
             "credibility_factor": round(credibility_factor, 4),
             "size_factor": round(size_factor, 4),
+            "confirmation_factor": round(confirmation_factor, 4),
         }
         c.pre_score = round(100.0 * composite, 2)
 
@@ -440,6 +478,12 @@ Weigh materiality RELATIVE TO COMPANY SIZE: the same development moves a small-
 or mid-cap far more than a mega-cap, so a genuine catalyst at a smaller company
 should outrank routine news at a giant. Each ticker's market cap is provided.
 
+When a PRE-MARKET line is shown, treat it as corroborating market evidence: a
+large move on heavy relative volume confirms the catalyst is already being
+priced in (raise surprise/materiality and let it inform direction). Do NOT chase
+a big move the provided news doesn't justify, and do not penalise a strong
+catalyst that simply hasn't started moving pre-market yet.
+
 Rank by catalyst_score. Be skeptical: thin or purely promotional coverage
 should score low even if there is a lot of it."""
 
@@ -490,6 +534,11 @@ def _build_llm_prompt(candidates: list[CandidateFeatures]) -> str:
             f"(independent stories={c.n_stories}, distinct sources={c.n_sources}, "
             f"abnormal_attention={c.abnormal_attention}x, source_types={','.join(c.source_types)})",
         ]
+        pm = c.premarket
+        if pm and pm.get("gap_pct") is not None:
+            rv = pm.get("rel_volume")
+            rv_str = f"{rv:.1f}x relative volume" if rv is not None else "unknown volume"
+            lines.append(f"PRE-MARKET: {pm['gap_pct']:+.1f}% vs prev close on {rv_str}")
         for a in c.sample_articles:
             tag = a["source_type"].upper()
             reprint = f" [+{a['reprints'] - 1} reprints]" if a["reprints"] > 1 else ""
@@ -576,6 +625,26 @@ async def _fetch_market_caps_safe(tickers: list[str]) -> dict[str, float]:
         return {}
 
 
+async def _fetch_premarket_safe(tickers: list[str]) -> dict[str, dict[str, Any]]:
+    """
+    Resolve pre-market gap + relative volume via Finviz Elite, never raising.
+    Returns {} when no Elite token is configured or on any failure, so the
+    confirmation factor degrades to 1.0 (no behaviour change without Elite).
+    """
+    if not tickers:
+        return {}
+    try:
+        import finviz_elite
+        if not finviz_elite.has_token():
+            return {}
+        pm = await finviz_elite.fetch_premarket(tickers)
+        log.info("pre-market resolved: %d/%d tickers (finviz elite)", len(pm), len(tickers))
+        return pm
+    except Exception as exc:  # noqa: BLE001
+        log.warning("pre-market fetch failed (%s) — no confirmation signal", exc)
+        return {}
+
+
 async def rank_catalysts(
     collection: Any,
     *,
@@ -607,8 +676,16 @@ async def rank_catalysts(
     # volume-qualified tickers to keep the lookup small; degrade to size-neutral
     # scoring if the screener is unreachable.
     qualified_tickers = [c.ticker for c in candidates if c.n_sources >= min_sources]
-    market_caps = await _fetch_market_caps_safe(qualified_tickers)
-    ranked = score_candidates(candidates, min_sources=min_sources, market_caps=market_caps)
+    # Resolve size + pre-market signals concurrently (Yahoo caps, Finviz Elite
+    # pre-market). Both degrade to neutral on failure / when Elite isn't set up.
+    market_caps, premarket = await asyncio.gather(
+        _fetch_market_caps_safe(qualified_tickers),
+        _fetch_premarket_safe(qualified_tickers),
+    )
+    ranked = score_candidates(
+        candidates, min_sources=min_sources,
+        market_caps=market_caps, premarket=premarket,
+    )
     shortlist = ranked[:top_k]
 
     llm_by_ticker: Optional[dict[str, Any]] = None
@@ -630,6 +707,8 @@ async def rank_catalysts(
             "abnormal_attention": c.abnormal_attention,
             "market_cap": c.market_cap,
             "size_factor": c.size_factor,
+            "premarket": c.premarket,
+            "confirmation_factor": c.confirmation_factor,
             "pre_score": c.pre_score,
             "components": c.components,
             "sample_articles": c.sample_articles,

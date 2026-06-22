@@ -60,6 +60,34 @@ function shortDateTime(iso: string): string {
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
+function PremarketBadge({ pm }: { pm: NonNullable<CatalystItem["premarket"]> }) {
+  if (pm.gap_pct == null) return null;
+  const up = pm.gap_pct > 0;
+  const down = pm.gap_pct < 0;
+  const tone = up
+    ? "bg-emerald-500/10 text-emerald-400 border-emerald-800"
+    : down
+    ? "bg-red-500/10 text-red-400 border-red-900"
+    : "bg-slate-700/30 text-slate-400 border-slate-700";
+  const rv = pm.rel_volume;
+  // Heavy relative volume is what makes a pre-market gap a real confirmation.
+  const heavy = rv != null && rv >= 1.5;
+  return (
+    <span
+      className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded border ${tone}`}
+      title={
+        "Pre-market move vs prior close at ranking time (Finviz Elite). " +
+        (heavy ? "Heavy relative volume — strong catalyst confirmation." : "")
+      }
+    >
+      Pre-mkt {up ? "▲" : down ? "▼" : "·"} {up ? "+" : ""}{pm.gap_pct.toFixed(1)}%
+      {rv != null && (
+        <span className={heavy ? "" : "opacity-70"}>· {rv.toFixed(1)}× vol</span>
+      )}
+    </span>
+  );
+}
+
 function SubscoreBar({ label, value }: { label: string; value: number | null }) {
   const pct = value == null ? 0 : Math.round(value * 100);
   return (
@@ -110,6 +138,7 @@ function CatalystCard({ item, quote }: { item: CatalystItem; quote?: TickerQuote
               <span className="text-[10px] text-slate-400">
                 conf {(item.confidence * 100).toFixed(0)}%
               </span>
+              {item.premarket && <PremarketBadge pm={item.premarket} />}
             </div>
 
             <div className="flex flex-col items-end shrink-0">

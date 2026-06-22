@@ -36,6 +36,15 @@ _BASE_URL = "https://elite.finviz.com/export.ashx"
 _VIEW = "111"  # Overview columns
 _REQUEST_TIMEOUT = 20
 
+# Custom view (152) + a hand-picked column set for the pre-market signal.
+# Finviz has no dedicated "pre-market" columns: during pre-market hours the live
+# Price/Change/Volume already reflect extended-hours trading (only *after*-hours
+# is broken out separately). So the pre-market gap = current price vs prev close,
+# and Relative Volume is the (pre-computed) volume-confirmation ratio.
+#   1=Ticker  61=Gap  64=Relative Volume  65=Price  66=Change  81=Prev Close
+_PM_VIEW = "152"
+_PM_COLS = "1,61,64,65,66,81"
+
 # friendly id -> (Finviz signal `s=`, order `o=`, human label)
 _PRESETS: dict[str, tuple[str, str, str]] = {
     "top_gainers":    ("ta_topgainers",    "-change", "Top Gainers"),
@@ -258,4 +267,70 @@ async def fetch_market_caps(tickers: list[str], *, session: Any = None) -> dict[
     for row in _parse_csv(text):
         if row.get("market_cap") is not None:
             out[row["ticker"]] = row["market_cap"]
+    return out
+
+
+async def fetch_premarket(
+    tickers: list[str], *, session: Any = None
+) -> dict[str, dict[str, Any]]:
+    """
+    Pre-market move + relative volume for specific tickers via the Elite export.
+
+    Returns ``{TICKER: {"gap_pct", "rel_volume", "price", "prev_close",
+    "change_pct"}}`` — only tickers Finviz returned a usable row for.
+
+    ``gap_pct`` is the signed % move of the current (extended-hours) price vs the
+    prior close, computed from Price/Prev Close so it's unambiguous regardless of
+    how Finviz labels its Change column during pre-market; it falls back to the
+    Change column when Price/Prev Close are missing. ``rel_volume`` is Finviz's
+    pre-computed Relative Volume ratio (>1 = heavier than normal), the volume
+    confirmation that a pre-market move is real rather than a thin print.
+    """
+    token = _token()
+    syms = [t.strip().upper() for t in dict.fromkeys(tickers) if t and t.strip()]
+    if not token or not syms:
+        return {}
+    params = {"v": _PM_VIEW, "t": ",".join(syms[:100]), "c": _PM_COLS, "auth": token}
+    try:
+        import aiohttp
+    except ImportError:
+        return {}
+    owns_session = session is None
+    if owns_session:
+        session = aiohttp.ClientSession(headers=_HEADERS)
+    try:
+        async with session.get(_BASE_URL, params=params, timeout=_REQUEST_TIMEOUT) as resp:
+            if resp.status != 200:
+                log.warning("finviz elite pre-market HTTP %s", resp.status)
+                return {}
+            text = await resp.text()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("finviz elite pre-market failed: %s", type(exc).__name__)
+        return {}
+    finally:
+        if owns_session:
+            await session.close()
+
+    if "<html" in text[:200].lower():  # login page => bad/expired token
+        return {}
+
+    out: dict[str, dict[str, Any]] = {}
+    for d in csv.DictReader(io.StringIO(text)):
+        ticker = (d.get("Ticker") or "").strip().upper()
+        if not ticker:
+            continue
+        price = _num(d.get("Price"))
+        prev = _num(d.get("Prev Close"))
+        change = _pct(d.get("Change"))
+        if price is not None and prev:
+            gap = round((price - prev) / prev * 100.0, 2)
+        else:
+            gap = change if change is not None else _pct(d.get("Gap"))
+        out[ticker] = {
+            "gap_pct": gap,
+            "rel_volume": _num(d.get("Relative Volume")),
+            "price": price,
+            "prev_close": prev,
+            "change_pct": change,
+        }
     return out
