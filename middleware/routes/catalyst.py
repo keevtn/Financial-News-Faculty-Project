@@ -5,6 +5,7 @@ Pre-market catalyst-ranking endpoints.
 
   GET  /api/catalyst/latest      — most recent persisted ranking (public, cheap)
   GET  /api/catalyst/runs        — list recent run metadata (public, cheap)
+  GET  /api/catalyst/backtest    — replay graded runs under candidate formulas (protected)
   POST /api/catalyst/run         — generate + persist a new ranking (protected)
   POST /api/catalyst/grade/{id}  — score a past run against realized moves (protected)
 
@@ -25,6 +26,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Security
 from fastapi.security.api_key import APIKeyHeader
 
+import catalyst_backtest
 from catalyst_ranker import (
     get_latest_ranking,
     grade_run,
@@ -82,6 +84,47 @@ async def runs(
         coll.find({}, projection).sort("generated_at", -1).limit(limit).to_list(length=limit)
     )
     return {"runs": docs}
+
+
+@router.get("/backtest", dependencies=[Depends(_require_key)])
+@limiter.limit("10/hour")
+async def backtest(
+    request: Request,
+    top: int = Query(default=5, ge=1, le=20),
+) -> dict[str, Any]:
+    """
+    Replay every *graded* run under candidate pre-score formulas (no LLM, no
+    price re-fetch — uses the realized moves frozen at grading time) and report:
+
+      - baseline           — current default weights, all factors on.
+      - confirmation_ablation — the pre-market boost ON vs OFF (the one clean
+        hypothesis test: does it improve the ranking?).
+      - weight_sweep       — exploratory grid over component weights (overfits
+        with few runs; directional only).
+
+    Protected (reuses AGENT_API_KEY) because it scans full run documents.
+    """
+    coll = _rankings_collection(request)
+    projection = {
+        "_id": 0, "run_id": 1, "generated_at": 1,
+        "items.ticker": 1, "items.components": 1, "metrics": 1,
+    }
+    runs = await (
+        coll.find({"metrics.graded": {"$gt": 0}}, projection)
+        .sort("generated_at", -1).limit(500).to_list(length=500)
+    )
+    baseline = catalyst_backtest.backtest(runs)
+    return {
+        "n_graded_runs": baseline["n_runs"],
+        "baseline": baseline,
+        "confirmation_ablation": catalyst_backtest.confirmation_ablation(runs),
+        "weight_sweep": catalyst_backtest.sweep(runs, top=top),
+        "note": (
+            "Re-ranks the persisted shortlist only (not the selection boundary). "
+            "The weight sweep overfits with few runs — trust the confirmation "
+            "ablation and watch baseline metrics accumulate before changing weights."
+        ),
+    }
 
 
 @router.get("/track-record")
