@@ -55,8 +55,25 @@ _HEADERS = {
 }
 
 
+def _token() -> Optional[str]:
+    """
+    Elite auth token from ``FINVIZ_AUTH_TOKEN``.
+
+    Tolerant of a pasted full export URL: if the value contains ``auth=`` we pull
+    out just the token (the part after ``auth=`` up to the next ``&``), so it
+    works whether you paste the bare token or the whole export link.
+    """
+    raw = os.environ.get("FINVIZ_AUTH_TOKEN")
+    if not raw:
+        return None
+    raw = raw.strip()
+    if "auth=" in raw:
+        raw = raw.split("auth=", 1)[1].split("&", 1)[0]
+    return raw or None
+
+
 def has_token() -> bool:
-    return bool(os.environ.get("FINVIZ_AUTH_TOKEN"))
+    return bool(_token())
 
 
 def available_presets() -> list[str]:
@@ -82,6 +99,25 @@ def _num(s: Any) -> Optional[float]:
     mult = _SUFFIX.get(t[-1].upper())
     try:
         return round(float(t[:-1]) * mult, 2) if mult is not None else float(t)
+    except ValueError:
+        return None
+
+
+def _market_cap(s: Any) -> Optional[float]:
+    """
+    Finviz Elite's export gives market cap in **millions** as a plain number
+    (e.g. '329.74' = $329.74M). A suffixed value (e.g. '329.74M' / '4.4B') is
+    already in dollars, so handle both.
+    """
+    if s is None:
+        return None
+    t = str(s).strip().replace(",", "")
+    if not t or t in ("-", "N/A"):
+        return None
+    if t[-1].upper() in _SUFFIX:
+        return _num(t)
+    try:
+        return round(float(t) * 1e6, 2)
     except ValueError:
         return None
 
@@ -115,7 +151,7 @@ def _row_from_csv(d: dict[str, str]) -> Optional[dict[str, Any]]:
         "sector": (d.get("Sector") or "").strip(),
         "industry": (d.get("Industry") or "").strip(),
         "country": (d.get("Country") or "").strip(),
-        "market_cap": _num(d.get("Market Cap")),
+        "market_cap": _market_cap(d.get("Market Cap")),
         "pe": _num(d.get("P/E")),
         "price": _num(d.get("Price")),
         "change_pct": _pct(d.get("Change")),
@@ -147,7 +183,7 @@ async def fetch_screener(
     signal, order, _label = _PRESETS[preset]
     limit = max(1, min(limit, 100))
 
-    token = os.environ.get("FINVIZ_AUTH_TOKEN")
+    token = _token()
     if not token:
         return {"rows": [], "count": 0, "preset": preset,
                 "status": "FINVIZ_AUTH_TOKEN not set", "source": "finviz_elite"}
@@ -196,7 +232,7 @@ async def fetch_screener(
 
 async def fetch_market_caps(tickers: list[str], *, session: Any = None) -> dict[str, float]:
     """Market caps for specific tickers via the Elite export ``t=`` filter."""
-    token = os.environ.get("FINVIZ_AUTH_TOKEN")
+    token = _token()
     syms = [t.strip().upper() for t in dict.fromkeys(tickers) if t and t.strip()]
     if not token or not syms:
         return {}
