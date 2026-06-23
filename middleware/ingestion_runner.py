@@ -7,7 +7,9 @@ local machine left running.
 
 Two independent pipelines, each gated by its own env flag (both default off):
 
-  * ``RUN_INGESTION``  — structured sources (RSS / SEC / FDA).
+  * ``RUN_INGESTION``  — structured sources (RSS / SEC / FDA). Reddit's social
+    RSS rides this pipeline but is gated by ``RUN_REDDIT`` (default off, since
+    its feeds 403/429 from datacenter IPs — enable only on a residential IP).
   * ``RUN_SOCIAL``     — social sources (StockTwits + Bluesky). Sub-toggles
     ``RUN_STOCKTWITS`` / ``RUN_BLUESKY`` (default on) disable one source.
 
@@ -94,12 +96,27 @@ async def start_ingestion(app: Any) -> None:
 async def _start_structured(app: Any, mongo_uri: str, analyzer: Any, attach_storage: Any) -> None:
     """RSS / SEC / FDA pipeline. Relaxed intervals — shares one free-tier process."""
     try:
-        from IngestionModule import IngestionAgent
+        from IngestionModule import IngestionAgent, DEFAULT_RSS_FEEDS
     except Exception as exc:  # noqa: BLE001
         log.error("Structured ingestion deps unavailable (%s) — skipped", exc)
         return
 
+    # Reddit's unauthenticated RSS is 403/429-blocked from datacenter IPs, so on a
+    # hosted deployment (Render) those feeds fail every single cycle — pure log
+    # noise (it floods the log past the viewer's size cap) and wasted requests.
+    # Gate them behind RUN_REDDIT (default off); enable it only where egress is a
+    # residential IP (local dev). Bluesky carries social in production regardless.
+    if _env_flag("RUN_REDDIT", False):
+        rss_feeds = None  # None -> IngestionAgent uses the full DEFAULT_RSS_FEEDS
+    else:
+        rss_feeds = [f for f in DEFAULT_RSS_FEEDS if "reddit.com" not in f.get("url", "")]
+        dropped = len(DEFAULT_RSS_FEEDS) - len(rss_feeds)
+        if dropped:
+            log.info("Reddit RSS disabled (RUN_REDDIT unset) — skipped %d feed(s) "
+                     "that 403/429 from datacenter IPs", dropped)
+
     agent = IngestionAgent(
+        rss_feeds=rss_feeds,
         rss_poll_interval=_env_float("RSS_POLL_INTERVAL", 120.0),
         sec_poll_interval=_env_float("SEC_POLL_INTERVAL", 600.0),
         fda_poll_interval=_env_float("FDA_POLL_INTERVAL", 600.0),
