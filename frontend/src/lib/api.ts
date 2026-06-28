@@ -312,6 +312,7 @@ export interface SqueezeItem {
   n_posts: number;
   focus_score: number;
   social_sentiment: number;         // -1..1
+  social_velocity: number | null;   // gossip mention acceleration (× baseline)
   engagement: number;
   fuel_score: number;               // 0..1
   ignition_score: number;           // 0..1
@@ -365,6 +366,41 @@ export async function fetchSqueezeTrackRecord(): Promise<SqueezeTrackRecord | nu
     const res = await fetch(`${API_BASE}/api/squeeze/track-record`);
     if (!res.ok) return null;
     return (await res.json()) as SqueezeTrackRecord;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gossip — rolling-window mention velocity over the social stream (read-only)
+// ---------------------------------------------------------------------------
+
+export interface GossipItem {
+  rank: number;
+  ticker: string;
+  recent_count: number;
+  baseline_rate: number;
+  velocity: number;          // recent rate ÷ trailing baseline (>1 = accelerating)
+  mean_sentiment: number;    // -1..1
+  direction: Direction;
+  gossip_score: number;      // 0..100
+}
+
+export interface GossipResult {
+  generated_at: string;
+  params: { recent_hours: number; baseline_days: number; min_recent: number };
+  ticker_count: number;
+  post_count: number;
+  items: GossipItem[];
+  cached?: boolean;
+}
+
+/** Tickers whose social chatter is accelerating vs their own baseline. Public read. */
+export async function fetchGossip(): Promise<GossipResult | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/gossip`);
+    if (!res.ok) return null;
+    return (await res.json()) as GossipResult;
   } catch {
     return null;
   }

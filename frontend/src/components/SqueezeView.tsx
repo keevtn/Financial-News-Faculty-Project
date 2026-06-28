@@ -145,6 +145,14 @@ function SqueezeCard({ item }: { item: SqueezeItem }) {
                 {fmtSent(item.social_sentiment)}
               </span>
             </span>
+            {item.social_velocity != null && item.social_velocity > 1 && (
+              <>
+                <span className="text-slate-400">·</span>
+                <span className="font-mono text-amber-400" title="Mention acceleration vs trailing baseline (gossip)">
+                  {item.social_velocity.toFixed(1)}× accel
+                </span>
+              </>
+            )}
           </div>
 
           {/* posts toggle */}
