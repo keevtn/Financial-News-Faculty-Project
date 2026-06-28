@@ -43,7 +43,7 @@ export default function TickerChart({ symbol, range }: { symbol: string; range: 
     const el = containerRef.current;
     if (!el || !history || history.bars.length === 0) return;
 
-    const intraday = range === "1D" || range === "5D";
+    const intraday = range === "1D" || range === "5D" || range === "2W";
     const chart = createChart(el, {
       width: el.clientWidth,
       height: 320,

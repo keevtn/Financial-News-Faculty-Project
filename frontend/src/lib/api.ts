@@ -118,7 +118,7 @@ export interface TickerHistory {
   status: string | null;
 }
 
-export type ChartRange = "1D" | "5D" | "1M" | "3M" | "1Y";
+export type ChartRange = "1D" | "5D" | "2W" | "1M" | "3M" | "1Y";
 
 export interface SentimentPoint {
   time: number;                      // UTC epoch seconds (day start)

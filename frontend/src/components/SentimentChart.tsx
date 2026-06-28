@@ -14,7 +14,7 @@ import { ChartRange, SentimentHistory, SentimentPoint, fetchTickerSentimentHisto
 
 // Map the shared price-chart range to a sentiment lookback (days). Sentiment is
 // daily and only spans the ingestion window, so short ranges show few points.
-const RANGE_DAYS: Record<ChartRange, number> = { "1D": 1, "5D": 5, "1M": 30, "3M": 90, "1Y": 365 };
+const RANGE_DAYS: Record<ChartRange, number> = { "1D": 1, "5D": 5, "2W": 14, "1M": 30, "3M": 90, "1Y": 365 };
 
 type Mode = "all" | "news" | "social" | "both";
 const MODES: { id: Mode; label: string }[] = [

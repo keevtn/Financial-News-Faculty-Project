@@ -158,9 +158,12 @@ async def get_ticker_quotes(
 
 # range key -> (yfinance period, interval). Intraday for short ranges, daily
 # bars for longer ones.
+# yfinance has no "2-week" period, so 2W fetches 1mo of hourly bars and is sliced
+# to the last 14 days below.
 _HISTORY_RANGES: dict[str, tuple[str, str]] = {
     "1D": ("1d", "5m"),
     "5D": ("5d", "15m"),
+    "2W": ("1mo", "1h"),
     "1M": ("1mo", "1d"),
     "3M": ("3mo", "1d"),
     "1Y": ("1y", "1d"),
@@ -206,6 +209,11 @@ def _fetch_history_sync(symbol: str, range_key: str) -> dict[str, Any]:
             prev_close = None
     except Exception:  # noqa: BLE001
         bars = []
+
+    # 2W: fetched as 1mo hourly, keep only the last 14 days.
+    if range_key == "2W" and bars:
+        cutoff = time.time() - 14 * 86400
+        bars = [b for b in bars if b["time"] >= cutoff]
 
     payload = {
         "symbol": symbol, "range": range_key, "interval": interval,

@@ -10,7 +10,7 @@ import OptionsReadout from "./OptionsReadout";
 const TickerChart = dynamic(() => import("./TickerChart"), { ssr: false });
 const SentimentChart = dynamic(() => import("./SentimentChart"), { ssr: false });
 
-const RANGES: ChartRange[] = ["1D", "5D", "1M", "3M", "1Y"];
+const RANGES: ChartRange[] = ["1D", "5D", "2W", "1M", "3M", "1Y"];
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])';
