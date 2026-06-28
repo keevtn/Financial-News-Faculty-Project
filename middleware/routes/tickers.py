@@ -237,7 +237,7 @@ async def get_ticker_history(
 async def get_ticker_sentiment_history(
     request: Request,
     symbol: str = Query(..., description="Single ticker symbol"),
-    days: int = Query(default=30, ge=1, le=180),
+    days: int = Query(default=30, ge=1, le=400),
 ) -> dict[str, Any]:
     """
     Daily mean sentiment + mention count for a ticker from the stored news/social

@@ -1,13 +1,16 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 
+import { ChartRange } from "@/lib/api";
 import OptionsReadout from "./OptionsReadout";
 
 // Load charts client-side only (lightweight-charts touches the DOM/canvas).
 const TickerChart = dynamic(() => import("./TickerChart"), { ssr: false });
 const SentimentChart = dynamic(() => import("./SentimentChart"), { ssr: false });
+
+const RANGES: ChartRange[] = ["1D", "5D", "1M", "3M", "1Y"];
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])';
@@ -20,6 +23,7 @@ export default function TickerChartModal({
   onClose: () => void;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const [range, setRange] = useState<ChartRange>("1M");
 
   useEffect(() => {
     // Move focus into the dialog and remember what to restore on close.
@@ -90,16 +94,34 @@ export default function TickerChartModal({
             <span aria-hidden="true">✕</span>
           </button>
         </div>
+        {/* one timeframe selector drives both charts */}
+        <div role="group" aria-label="Chart time range" className="flex gap-1 mb-3">
+          {RANGES.map((r) => (
+            <button
+              key={r}
+              onClick={() => setRange(r)}
+              aria-pressed={r === range}
+              className={[
+                "text-[11px] px-2 py-0.5 rounded border transition-colors",
+                r === range
+                  ? "bg-[#00d4aa]/10 text-[#00d4aa] border-[#00d4aa]/40"
+                  : "text-slate-400 border-[#1e2d4a] hover:border-[#2d4470] hover:text-slate-200",
+              ].join(" ")}
+            >
+              {r}
+            </button>
+          ))}
+        </div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div>
             <p className="text-[10px] uppercase tracking-widest text-slate-400 mb-1">Price</p>
-            <TickerChart symbol={symbol} />
+            <TickerChart symbol={symbol} range={range} />
           </div>
           <div>
             <p className="text-[10px] uppercase tracking-widest text-slate-400 mb-1">
               News &amp; social sentiment
             </p>
-            <SentimentChart symbol={symbol} />
+            <SentimentChart symbol={symbol} range={range} />
           </div>
         </div>
         <OptionsReadout symbol={symbol} />

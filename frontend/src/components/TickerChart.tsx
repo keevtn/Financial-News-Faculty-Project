@@ -13,13 +13,12 @@ import {
 } from "lightweight-charts";
 import { ChartRange, TickerHistory, fetchTickerHistory } from "@/lib/api";
 
-const RANGES: ChartRange[] = ["1D", "5D", "1M", "3M", "1Y"];
-
 const UP = "#10b981";
 const DOWN = "#ef4444";
 
-export default function TickerChart({ symbol }: { symbol: string }) {
-  const [range, setRange] = useState<ChartRange>("1M");
+// `range` is controlled by the parent (TickerChartModal) so the price and
+// sentiment charts share one timeframe selector.
+export default function TickerChart({ symbol, range }: { symbol: string; range: ChartRange }) {
   const [history, setHistory] = useState<TickerHistory | null>(null);
   const [loading, setLoading] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -123,23 +122,6 @@ export default function TickerChart({ symbol }: { symbol: string }) {
 
   return (
     <div>
-      <div role="group" aria-label="Chart time range" className="flex gap-1 mb-2">
-        {RANGES.map((r) => (
-          <button
-            key={r}
-            onClick={() => setRange(r)}
-            aria-pressed={r === range}
-            className={[
-              "text-[11px] px-2 py-0.5 rounded border transition-colors",
-              r === range
-                ? "bg-[#00d4aa]/10 text-[#00d4aa] border-[#00d4aa]/40"
-                : "text-slate-400 border-[#1e2d4a] hover:border-[#2d4470] hover:text-slate-200",
-            ].join(" ")}
-          >
-            {r}
-          </button>
-        ))}
-      </div>
       <div className="relative">
         <div
           ref={containerRef}

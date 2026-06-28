@@ -9,14 +9,16 @@ import {
   createChart,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { SentimentHistory, fetchTickerSentimentHistory } from "@/lib/api";
+import { ChartRange, SentimentHistory, fetchTickerSentimentHistory } from "@/lib/api";
 
-const WINDOWS = [14, 30, 90];
+// Map the shared price-chart range to a sentiment lookback (days). Sentiment is
+// daily and only spans the ingestion window, so short ranges show few points.
+const RANGE_DAYS: Record<ChartRange, number> = { "1D": 1, "5D": 5, "1M": 30, "3M": 90, "1Y": 365 };
 
 /** Daily news+social sentiment over time: a baseline series (green above neutral,
- *  red below) with a mention-count histogram — meant to sit beside the price chart. */
-export default function SentimentChart({ symbol }: { symbol: string }) {
-  const [days, setDays] = useState(30);
+ *  red below) with a mention-count histogram — shares the price chart's timeframe. */
+export default function SentimentChart({ symbol, range }: { symbol: string; range: ChartRange }) {
+  const days = RANGE_DAYS[range];
   const [hist, setHist] = useState<SentimentHistory | null>(null);
   const [loading, setLoading] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -94,23 +96,6 @@ export default function SentimentChart({ symbol }: { symbol: string }) {
 
   return (
     <div>
-      <div role="group" aria-label="Sentiment window" className="flex gap-1 mb-2">
-        {WINDOWS.map((d) => (
-          <button
-            key={d}
-            onClick={() => setDays(d)}
-            aria-pressed={d === days}
-            className={[
-              "text-[11px] px-2 py-0.5 rounded border transition-colors",
-              d === days
-                ? "bg-[#00d4aa]/10 text-[#00d4aa] border-[#00d4aa]/40"
-                : "text-slate-400 border-[#1e2d4a] hover:border-[#2d4470] hover:text-slate-200",
-            ].join(" ")}
-          >
-            {d}d
-          </button>
-        ))}
-      </div>
       <div className="relative">
         <div
           ref={containerRef}
