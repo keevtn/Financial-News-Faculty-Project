@@ -151,7 +151,7 @@ class CandidateFeatures:
     abnormal_attention: float = 1.0  # today's mentions / trailing daily baseline
     best_source_weight: float = 1.0  # max SOURCE_TYPE_WEIGHT seen
     credibility: float = 1.0         # max per-source credibility seen
-    market_cap: Optional[float] = None  # USD market cap (Finviz); None if unknown
+    market_cap: Optional[float] = None  # USD market cap (Yahoo/yfinance); None if unknown
     size_factor: float = 1.0         # size multiplier applied to the pre-score
     premarket: Optional[dict[str, Any]] = None  # {gap_pct, rel_volume, ...} or None
     confirmation_factor: float = 1.0  # pre-market boost applied to the pre-score
@@ -672,7 +672,7 @@ async def rank_catalysts(
             ticker_extractor = None
 
     candidates = build_candidates(docs, baseline, ticker_extractor=ticker_extractor)
-    # Size-adjust scoring with market caps (Finviz). Fetch only for the
+    # Size-adjust scoring with market caps (Yahoo). Fetch only for the
     # volume-qualified tickers to keep the lookup small; degrade to size-neutral
     # scoring if the screener is unreachable.
     qualified_tickers = [c.ticker for c in candidates if c.n_sources >= min_sources]
