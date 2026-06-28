@@ -169,3 +169,49 @@ async def fetch_market_caps(tickers: list[str], *, session: Any = None) -> dict[
     except Exception as exc:  # noqa: BLE001
         log.warning("yahoo market-cap fetch failed: %s", exc)
         return {}
+
+
+# --- short-interest data (squeeze "fuel"; via yfinance .info) --------------- #
+
+def _short_metrics_sync(tickers: list[str]) -> dict[str, dict[str, Any]]:
+    """Per-ticker short-interest fields via yfinance ``.info`` (sequential —
+    .info is a per-symbol fetch; fine for the few dozen names a squeeze run scans)."""
+    import yfinance as yf
+    out: dict[str, dict[str, Any]] = {}
+    for sym in tickers:
+        try:
+            info = yf.Ticker(sym).info
+        except Exception:  # noqa: BLE001
+            continue
+        spf = _f(info.get("shortPercentOfFloat"))   # fraction, 0.289 = 28.9%
+        sr = _f(info.get("shortRatio"))             # days to cover
+        fl = _f(info.get("floatShares"))
+        ss = _f(info.get("sharesShort"))
+        if spf is None and sr is None and ss is None:
+            continue  # no short data published -> skip
+        out[sym] = {
+            "short_pct_float": spf,
+            "short_ratio": sr,
+            "float_shares": fl,
+            "shares_short": ss,
+        }
+    return out
+
+
+async def fetch_short_metrics(
+    tickers: list[str], *, session: Any = None
+) -> dict[str, dict[str, Any]]:
+    """``{ticker: {short_pct_float, short_ratio, float_shares, shares_short}}``
+    via yfinance; {} on failure (graceful). Works from datacenter IPs."""
+    syms = [t.strip().upper() for t in dict.fromkeys(tickers) if t and t.strip()]
+    if not syms:
+        return {}
+    try:
+        import yfinance  # noqa: F401
+    except ImportError:
+        return {}
+    try:
+        return await asyncio.to_thread(_short_metrics_sync, syms)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("short-metrics fetch failed: %s", type(exc).__name__)
+        return {}

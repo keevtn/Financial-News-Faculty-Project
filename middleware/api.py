@@ -37,7 +37,7 @@ for _p in (_project_root, _backend_dir):
         sys.path.insert(0, _p)
 
 from middleware.limiter import limiter
-from middleware.routes import news, sentiment, agent, tickers, catalyst, screener
+from middleware.routes import news, sentiment, agent, tickers, catalyst, screener, squeeze
 
 log = logging.getLogger("middleware")
 
@@ -83,17 +83,20 @@ async def lifespan(app: FastAPI):
             app.state.mongo_client = client
             app.state.news_collection = client["financial_news"]["news_items"]
             app.state.rankings_collection = client["financial_news"]["catalyst_rankings"]
+            app.state.squeeze_collection = client["financial_news"]["squeeze_rankings"]
             log.info("MongoDB connected")
         except Exception as exc:
             log.error("Failed to connect to MongoDB: %s", exc)
             app.state.mongo_client = None
             app.state.news_collection = None
             app.state.rankings_collection = None
+            app.state.squeeze_collection = None
     else:
         log.warning("MONGODB_URI not set — /api/news will return empty results")
         app.state.mongo_client = None
         app.state.news_collection = None
         app.state.rankings_collection = None
+        app.state.squeeze_collection = None
 
     # In-process ingestion (only when RUN_INGESTION=true — see ingestion_runner).
     # Keeps the feeds fresh on the hosted deployment without a separate worker.
@@ -111,6 +114,14 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         log.error("Failed to start catalyst scheduler: %s", exc)
 
+    # Squeeze scheduler (only when RUN_SQUEEZE_SCHEDULER=true). Own lane —
+    # social-driven short-squeeze ranking, separate from the catalyst run.
+    try:
+        from middleware.squeeze_scheduler import start_squeeze_scheduler
+        await start_squeeze_scheduler(app)
+    except Exception as exc:
+        log.error("Failed to start squeeze scheduler: %s", exc)
+
     yield
 
     try:
@@ -124,6 +135,12 @@ async def lifespan(app: FastAPI):
         await stop_catalyst_scheduler(app)
     except Exception as exc:
         log.error("Failed to stop catalyst scheduler: %s", exc)
+
+    try:
+        from middleware.squeeze_scheduler import stop_squeeze_scheduler
+        await stop_squeeze_scheduler(app)
+    except Exception as exc:
+        log.error("Failed to stop squeeze scheduler: %s", exc)
 
     if getattr(app.state, "mongo_client", None):
         app.state.mongo_client.close()
@@ -155,6 +172,7 @@ app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
 app.include_router(tickers.router, prefix="/api/tickers", tags=["tickers"])
 app.include_router(catalyst.router, prefix="/api/catalyst", tags=["catalyst"])
 app.include_router(screener.router, prefix="/api/screener", tags=["screener"])
+app.include_router(squeeze.router, prefix="/api/squeeze", tags=["squeeze"])
 
 
 @app.get("/health", tags=["meta"])
