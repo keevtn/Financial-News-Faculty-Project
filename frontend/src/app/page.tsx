@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { ALL_TOPICS, ALL_SENTIMENTS, STRUCTURED_SOURCE_TYPES, ALL_PLATFORMS } from "@/lib/mockData";
-import { fetchNews, scoreSentimentBatch, scoreSocialSentimentBatch } from "@/lib/api";
+import { fetchNews, scoreSentimentBatch, scoreSocialSentimentBatch, fetchAlerts } from "@/lib/api";
 import { FilterState, NewsItem, SentimentLabel, SocialFilterState, SourceType } from "@/types/news";
 import Header from "@/components/Header";
 import FilterSidebar from "@/components/FilterSidebar";
@@ -13,6 +13,7 @@ import UnstructuredView from "@/components/UnstructuredView";
 import CatalystView from "@/components/CatalystView";
 import SqueezeView from "@/components/SqueezeView";
 import GossipView from "@/components/GossipView";
+import AlertsView from "@/components/AlertsView";
 import ScreenerView from "@/components/ScreenerView";
 import TickerTape from "@/components/TickerTape";
 import { ChartProvider } from "@/components/ChartProvider";
@@ -50,6 +51,18 @@ export default function HomePage() {
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
   const [socialFilters, setSocialFilters] = useState<SocialFilterState>(DEFAULT_SOCIAL_FILTERS);
   const [activeTab, setActiveTab] = useState<TabId>("structured");
+  const [alertCount, setAlertCount] = useState(0);
+
+  // Lightweight alert-count fetch for the nav badge (the API is cached server-side).
+  useEffect(() => {
+    let cancelled = false;
+    fetchAlerts().then((r) => {
+      if (!cancelled && r) setAlertCount(r.total);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Split at source_type so structured and social tabs never share items.
   const structuredItems = useMemo(
@@ -290,7 +303,7 @@ export default function HomePage() {
       <a href="#main-content" className="skip-link">Skip to content</a>
       <Header itemCount={filtered.length} scoringPending={scoringPending} />
       <TickerTape symbols={allSymbols} pollIntervalMs={60_000} />
-      <TabNav active={activeTab} onChange={setActiveTab} />
+      <TabNav active={activeTab} onChange={setActiveTab} badges={{ alerts: alertCount }} />
       <main id="main-content" className="flex-1 flex flex-col min-h-0 overflow-hidden">
       {activeTab === "structured" ? (
         <>
@@ -315,6 +328,8 @@ export default function HomePage() {
         <SqueezeView />
       ) : activeTab === "gossip" ? (
         <GossipView />
+      ) : activeTab === "alerts" ? (
+        <AlertsView />
       ) : (
         <ScreenerView />
       )}

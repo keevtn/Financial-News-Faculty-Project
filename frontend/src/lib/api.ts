@@ -372,6 +372,41 @@ export async function fetchSqueezeTrackRecord(): Promise<SqueezeTrackRecord | nu
 }
 
 // ---------------------------------------------------------------------------
+// Alerts — signal thresholds crossed (squeeze / gossip / catalyst), read-only
+// ---------------------------------------------------------------------------
+
+export type AlertSeverity = "critical" | "high" | "medium";
+
+export interface AlertItem {
+  ticker: string;
+  severity: AlertSeverity;
+  title: string;
+  detail: string;
+  signals: string[];   // which fired: squeeze | gossip | catalyst
+  value: number;
+  tab: string;         // where to look
+}
+
+export interface AlertsResult {
+  alerts: AlertItem[];
+  counts: { critical: number; high: number; medium: number };
+  total: number;
+  generated_at: number;
+  cached?: boolean;
+}
+
+/** Current alerts: tickers that crossed a signal threshold, ranked by confluence. */
+export async function fetchAlerts(): Promise<AlertsResult | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/alerts`);
+    if (!res.ok) return null;
+    return (await res.json()) as AlertsResult;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Gossip — rolling-window mention velocity over the social stream (read-only)
 // ---------------------------------------------------------------------------
 
