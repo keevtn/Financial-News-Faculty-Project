@@ -68,9 +68,32 @@ class TestIgnitionScore:
         ign, _ = sq._ignition_score(0.0, 0.0, 0.0, velocity=5.0)
         assert abs(ign - 0.20) < 1e-9                  # only the velocity weight
 
+    def test_search_term_lifts_ignition(self):
+        base, _ = sq._ignition_score(6.0, 0.2, 20, velocity=1.0)
+        withs, c = sq._ignition_score(6.0, 0.2, 20, velocity=1.0, search=0.8)
+        assert "search" in c and c["search"] == 0.8
+        assert withs > base                            # a strong search term raises ignition
+
     def test_quiet_is_zero(self):
         ign, _ = sq._ignition_score(0.0, 0.0, 0.0)
         assert ign == 0.0
+
+
+class TestDivergence:
+    def test_none_without_search(self):
+        assert sq._divergence(3.0, None) is None
+
+    def test_mainstream_when_both_rising(self):
+        assert sq._divergence(3.0, 3.0) == "mainstream"
+
+    def test_early_when_only_social(self):
+        assert sq._divergence(3.0, 1.0) == "early"
+
+    def test_search_led_when_only_search(self):
+        assert sq._divergence(1.0, 3.0) == "search-led"
+
+    def test_aligned_when_neither(self):
+        assert sq._divergence(1.0, 1.0) == "aligned"
 
 
 class TestSqueezeScore:

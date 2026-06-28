@@ -313,6 +313,9 @@ export interface SqueezeItem {
   focus_score: number;
   social_sentiment: number;         // -1..1
   social_velocity: number | null;   // gossip mention acceleration (× baseline)
+  search_velocity: number | null;   // Google-Trends search acceleration (× baseline)
+  search_clock: string | null;      // 'fast' | 'slow' fuel clock
+  divergence: string | null;        // early | mainstream | search-led | aligned
   engagement: number;
   fuel_score: number;               // 0..1
   ignition_score: number;           // 0..1

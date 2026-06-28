@@ -52,7 +52,11 @@ _VELOCITY_SAT = 5.0        # 5x trailing baseline (gossip) -> max acceleration t
 # rolling-window mention acceleration from gossip; when it's unavailable the
 # other three are renormalized, so ignition degrades gracefully to the snapshot.
 _FUEL_W = {"short_float": 0.45, "days_to_cover": 0.35, "low_float": 0.20}
-_IGNITION_W = {"volume": 0.40, "bullish": 0.25, "engagement": 0.15, "velocity": 0.20}
+# `velocity` = social mention acceleration (gossip); `search` = Google-Trends
+# search-interest acceleration. Both optional — weights renormalize over the
+# terms actually present, so missing signals degrade gracefully.
+_IGNITION_W = {"volume": 0.40, "bullish": 0.25, "engagement": 0.15,
+               "velocity": 0.20, "search": 0.15}
 # Fuel-only floor: a primed name with zero ignition still scores this fraction.
 _IGNITION_FLOOR = 0.25
 
@@ -92,13 +96,15 @@ def _ignition_score(
     sentiment: float,
     engagement: float,
     velocity: Optional[float] = None,
+    search: Optional[float] = None,
 ) -> tuple[float, dict[str, float]]:
     """The trigger, 0..1: bullish chatter volume × lean × amplification ×
     acceleration. Only *bullish* sentiment ignites a squeeze (bearish/neutral on a
     heavily shorted name is the shorts being right), so the bullish term floors at
-    0. ``velocity`` (gossip mention acceleration) adds the "is it taking off NOW"
-    dimension; when absent the other terms are renormalized so the score stays
-    comparable (graceful degradation to the live snapshot)."""
+    0. ``velocity`` (gossip mention acceleration) and ``search`` (Google-Trends
+    search-interest acceleration, already a fuel-adapted [0,1] term) add the "is it
+    taking off NOW" dimensions; when absent the remaining terms are renormalized so
+    the score stays comparable (graceful degradation)."""
     terms = {
         "volume": _sat(focus_score, _FOCUS_SAT),
         "bullish": max(0.0, sentiment),
@@ -106,9 +112,32 @@ def _ignition_score(
     }
     if velocity is not None:
         terms["velocity"] = _velocity_term(velocity)
+    if search is not None:
+        terms["search"] = max(0.0, min(search, 1.0))
     wsum = sum(_IGNITION_W[k] for k in terms)
     ign = sum(_IGNITION_W[k] * v for k, v in terms.items()) / wsum
     return ign, {k: round(v, 4) for k, v in terms.items()}
+
+
+def _divergence(social_velocity: Optional[float], search_velocity: Optional[float]) -> Optional[str]:
+    """Squeeze-stage tell from social vs search acceleration:
+      early      — fintwit rising, mainstream search hasn't noticed (earliest)
+      mainstream — both rising (the second-leg FOMO broadening)
+      search-led — public searching but social quiet
+      aligned    — neither notably rising
+    None when search interest isn't available to compare."""
+    if search_velocity is None:
+        return None
+    s = social_velocity or 0.0
+    g = search_velocity or 0.0
+    hot = 2.0  # x baseline considered "rising"
+    if s >= hot and g >= hot:
+        return "mainstream"
+    if s >= hot:
+        return "early"
+    if g >= hot:
+        return "search-led"
+    return "aligned"
 
 
 def _squeeze_score(fuel: float, ignition: float) -> float:
@@ -137,6 +166,9 @@ class SqueezeCandidate:
     focus_score: float = 0.0
     social_sentiment: float = 0.0            # -1..1 (LM)
     social_velocity: Optional[float] = None  # gossip mention acceleration (x baseline)
+    search_velocity: Optional[float] = None  # Google-Trends search acceleration (x baseline)
+    search_clock: Optional[str] = None       # 'fast'/'slow' fuel clock used for Trends sensitivity
+    divergence: Optional[str] = None         # early / mainstream / search-led / aligned
     engagement: int = 0
     fuel_score: float = 0.0                  # 0..1
     ignition_score: float = 0.0              # 0..1
@@ -153,10 +185,12 @@ def score_candidate(
     social: Optional[dict[str, Any]],
     sentiment: float,
     velocity: Optional[float] = None,
+    search_signal: Optional[dict[str, Any]] = None,
 ) -> SqueezeCandidate:
     """Combine short fuel + social ignition into a scored squeeze candidate.
-    ``velocity`` is the gossip mention-acceleration (x baseline); None -> the
-    ignition uses the live snapshot only."""
+    ``velocity`` is the gossip mention-acceleration (x baseline); ``search_signal``
+    is the Trends signal ({build_velocity, clock, search_term}). Both optional ->
+    ignition falls back to whatever is present."""
     spf = short.get("short_pct_float")
     sr = short.get("short_ratio")
     fl = short.get("float_shares")
@@ -165,7 +199,11 @@ def score_candidate(
     focus = float(social.get("focus_score", 0.0)) if social else 0.0
     engagement = int(social.get("engagement", 0)) if social else 0
     n_posts = int(social.get("n_posts", 0)) if social else 0
-    ign, ign_c = _ignition_score(focus, sentiment, engagement, velocity)
+
+    search_t = search_signal.get("search_term") if search_signal else None
+    search_vel = search_signal.get("build_velocity") if search_signal else None
+    search_clk = search_signal.get("clock") if search_signal else None
+    ign, ign_c = _ignition_score(focus, sentiment, engagement, velocity, search_t)
 
     return SqueezeCandidate(
         ticker=ticker,
@@ -173,6 +211,9 @@ def score_candidate(
         n_posts=n_posts, focus_score=round(focus, 3),
         social_sentiment=round(sentiment, 4),
         social_velocity=round(velocity, 2) if velocity is not None else None,
+        search_velocity=round(search_vel, 2) if search_vel is not None else None,
+        search_clock=search_clk,
+        divergence=_divergence(velocity, search_vel),
         engagement=engagement,
         fuel_score=round(fuel, 4), ignition_score=round(ign, 4),
         squeeze_score=_squeeze_score(fuel, ign),
@@ -247,6 +288,16 @@ async def rank_squeezes(
         except Exception as exc:  # noqa: BLE001
             log.warning("velocity fetch failed (%s) — ignition uses snapshot only", type(exc).__name__)
 
+    # Google-Trends search-interest velocity (gated by RUN_TRENDS; best-effort).
+    # fuel-adaptive: short metrics decide each name's fast/slow Trends sensitivity.
+    trends_signals: dict[str, dict[str, Any]] = {}
+    if fueled:
+        try:
+            from trends import search_signals
+            trends_signals = await search_signals(fueled, shorts, now=None)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("trends fetch failed (%s) — ignition uses social only", type(exc).__name__)
+
     # 4) Sentiment + score.
     try:
         from sentiment import LoughranMcDonaldAnalyzer
@@ -259,7 +310,8 @@ async def rank_squeezes(
     for t in fueled:
         s = social.get(t)
         sentiment = _social_sentiment(analyzer, s.get("texts", [])) if s else 0.0
-        candidates.append(score_candidate(t, shorts.get(t, {}), s, sentiment, velocities.get(t)))
+        candidates.append(score_candidate(
+            t, shorts.get(t, {}), s, sentiment, velocities.get(t), trends_signals.get(t)))
 
     candidates.sort(key=lambda c: c.squeeze_score, reverse=True)
     items = [asdict(c) for c in candidates[:top_k]]

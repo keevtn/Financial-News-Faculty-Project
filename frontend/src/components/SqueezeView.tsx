@@ -148,8 +148,31 @@ function SqueezeCard({ item }: { item: SqueezeItem }) {
             {item.social_velocity != null && item.social_velocity > 1 && (
               <>
                 <span className="text-slate-400">·</span>
-                <span className="font-mono text-amber-400" title="Mention acceleration vs trailing baseline (gossip)">
-                  {item.social_velocity.toFixed(1)}× accel
+                <span className="font-mono text-amber-400" title="Social mention acceleration vs trailing baseline (gossip)">
+                  {item.social_velocity.toFixed(1)}× social
+                </span>
+              </>
+            )}
+            {item.search_velocity != null && item.search_velocity > 1 && (
+              <>
+                <span className="text-slate-400">·</span>
+                <span className="font-mono text-sky-400" title="Google search acceleration vs baseline (Trends)">
+                  {item.search_velocity.toFixed(1)}× search
+                </span>
+              </>
+            )}
+            {item.divergence && item.divergence !== "aligned" && (
+              <>
+                <span className="text-slate-400">·</span>
+                <span
+                  className={`uppercase tracking-wider font-semibold ${
+                    item.divergence === "mainstream" ? "text-amber-400"
+                    : item.divergence === "early" ? "text-emerald-400"
+                    : "text-violet-400"
+                  }`}
+                  title="Squeeze stage from social-vs-search: early = fintwit only; mainstream = both rising"
+                >
+                  {item.divergence}
                 </span>
               </>
             )}
