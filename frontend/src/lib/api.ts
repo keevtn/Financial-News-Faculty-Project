@@ -121,9 +121,11 @@ export interface TickerHistory {
 export type ChartRange = "1D" | "5D" | "1M" | "3M" | "1Y";
 
 export interface SentimentPoint {
-  time: number;            // UTC epoch seconds (day start)
-  mean_sentiment: number;  // -1..1
-  count: number;           // mentions that day
+  time: number;                      // UTC epoch seconds (day start)
+  news_sentiment: number | null;     // -1..1, mean of structured (rss/sec/fda) that day
+  news_count: number;
+  social_sentiment: number | null;   // -1..1, mean of social that day
+  social_count: number;
 }
 
 export interface SentimentHistory {

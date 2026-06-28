@@ -240,8 +240,9 @@ async def get_ticker_sentiment_history(
     days: int = Query(default=30, ge=1, le=400),
 ) -> dict[str, Any]:
     """
-    Daily mean sentiment + mention count for a ticker from the stored news/social
-    items, shaped for a chart shown alongside the price candles. Spans only as far
+    Daily mean sentiment + mention count for a ticker, **split by source** (news =
+    rss/sec/fda, social = bluesky etc.), from the stored items. Lets the chart show
+    news-only, social-only, the blend, or both lines overlaid. Spans only as far
     back as the corpus has been ingested.
     """
     sym = symbol.strip().upper()
@@ -253,27 +254,38 @@ async def get_ticker_sentiment_history(
     query = {"tickers": sym, "published_at": {"$gte": start}, "sentiment.score": {"$exists": True}}
     try:
         docs = await (
-            coll.find(query, {"_id": 0, "published_at": 1, "sentiment.score": 1})
+            coll.find(query, {"_id": 0, "published_at": 1, "sentiment.score": 1, "source_type": 1})
             .limit(20_000).to_list(length=20_000)
         )
     except Exception:  # noqa: BLE001
         return {"symbol": sym, "days": days, "points": [], "status": "query failed"}
 
-    buckets: dict[Any, list[float]] = defaultdict(lambda: [0.0, 0.0])  # day -> [count, sum]
+    # day -> {"news": [count, sum], "social": [count, sum]}
+    buckets: dict[Any, dict[str, list[float]]] = defaultdict(
+        lambda: {"news": [0.0, 0.0], "social": [0.0, 0.0]}
+    )
     for d in docs:
         pub = d.get("published_at")
         score = (d.get("sentiment") or {}).get("score")
         if not isinstance(pub, datetime) or score is None:
             continue
-        day = pub.date()
-        buckets[day][0] += 1
-        buckets[day][1] += float(score)
+        cls = "social" if d.get("source_type") == "social" else "news"
+        b = buckets[pub.date()][cls]
+        b[0] += 1
+        b[1] += float(score)
 
     points = []
     for day in sorted(buckets):
-        cnt, total = buckets[day]
-        ts = int(datetime(day.year, day.month, day.day, tzinfo=timezone.utc).timestamp())
-        points.append({"time": ts, "mean_sentiment": round(total / cnt, 4), "count": int(cnt)})
+        b = buckets[day]
+        nc, ns = b["news"]
+        sc, ss = b["social"]
+        points.append({
+            "time": int(datetime(day.year, day.month, day.day, tzinfo=timezone.utc).timestamp()),
+            "news_sentiment": round(ns / nc, 4) if nc else None,
+            "news_count": int(nc),
+            "social_sentiment": round(ss / sc, 4) if sc else None,
+            "social_count": int(sc),
+        })
 
     return {"symbol": sym, "days": days, "points": points,
             "status": None if points else "no sentiment data"}
