@@ -1,4 +1,4 @@
-export type TabId = "structured" | "unstructured" | "catalysts" | "screener";
+export type TabId = "structured" | "unstructured" | "catalysts" | "screener" | "squeeze";
 
 interface TabNavProps {
   active: TabId;
@@ -9,6 +9,7 @@ const TABS: { id: TabId; label: string; sub: string }[] = [
   { id: "structured",   label: "Structured",   sub: "RSS · SEC · FDA" },
   { id: "unstructured", label: "Unstructured", sub: "Social · Transcripts · Crawls" },
   { id: "catalysts",    label: "Catalysts",    sub: "Pre-market AI ranking" },
+  { id: "squeeze",      label: "Squeeze",      sub: "Short fuel · Social ignition" },
   { id: "screener",     label: "Screener",     sub: "Market Cap · Movers · Volume" },
 ];
 

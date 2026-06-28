@@ -292,6 +292,59 @@ export async function fetchCatalystTrackRecord(): Promise<CatalystTrackRecord | 
 }
 
 // ---------------------------------------------------------------------------
+// Squeeze ranking — short fuel × social ignition (read-only; generated server-side)
+// ---------------------------------------------------------------------------
+
+export interface SqueezePost {
+  text: string;
+  likes: number;
+  replies: number;
+  handle: string;
+  created_at: string;
+}
+
+export interface SqueezeItem {
+  rank: number;
+  ticker: string;
+  short_pct_float: number | null;   // fraction (0.289 = 28.9%)
+  short_ratio: number | null;       // days to cover
+  float_shares: number | null;
+  n_posts: number;
+  focus_score: number;
+  social_sentiment: number;         // -1..1
+  engagement: number;
+  fuel_score: number;               // 0..1
+  ignition_score: number;           // 0..1
+  squeeze_score: number;            // 0..100
+  direction: Direction;
+  sources: string[];
+  components: Record<string, number>;
+  sample_posts: SqueezePost[];
+}
+
+export interface SqueezeRanking {
+  run_id: string;
+  generated_at: string;
+  params: { top_k: number; min_short_float: number; max_fueled: number; social_limit: number };
+  universe_count: number;
+  fueled_count: number;
+  social_count: number;
+  items: SqueezeItem[];
+}
+
+/** Most recent persisted squeeze ranking, or null. Public read (generated server-side). */
+export async function fetchLatestSqueeze(): Promise<SqueezeRanking | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/squeeze/latest`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return (data.ranking ?? null) as SqueezeRanking | null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Numeric screener — market-wide movers from Finviz (read-only)
 // ---------------------------------------------------------------------------
 
