@@ -134,7 +134,10 @@ async def run(
     min_short_float: float = Query(default=0.10, ge=0.0, le=1.0),
 ) -> dict[str, Any]:
     """Generate, persist, and return a new squeeze ranking."""
-    result = await rank_squeezes(top_k=top_k, min_short_float=min_short_float)
+    result = await rank_squeezes(
+        top_k=top_k, min_short_float=min_short_float,
+        social_collection=getattr(request.app.state, "news_collection", None),
+    )
     await save_squeeze_ranking(_squeeze_collection(request), result)
     return {"ranking": result}
 

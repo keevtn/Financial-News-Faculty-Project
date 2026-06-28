@@ -84,6 +84,7 @@ async def _tick(app: Any) -> None:
             result = await rank_squeezes(
                 top_k=_env_int("SQUEEZE_TOP_K", 15),
                 min_short_float=_env_float("SQUEEZE_MIN_SHORT_FLOAT", 0.10),
+                social_collection=getattr(app.state, "news_collection", None),
                 now=now,
             )
             await save_squeeze_ranking(coll, result)

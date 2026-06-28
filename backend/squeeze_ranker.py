@@ -46,13 +46,22 @@ _DAYS_TO_COVER_SAT = 8.0   # 8 days to cover -> max (hard to unwind)
 _LOW_FLOAT_REF = 50e6      # float at/below which the low-float term maxes out
 _FOCUS_SAT = 12.0          # spam-robust mention volume at which ignition maxes
 _ENGAGEMENT_SAT = 100.0    # likes+replies at which the engagement term maxes
+_VELOCITY_SAT = 5.0        # 5x trailing baseline (gossip) -> max acceleration term
 
-# Fuel = how loaded the short setup is; weights sum to 1.
+# Ignition weights (sum to 1 with velocity present). The `velocity` term is the
+# rolling-window mention acceleration from gossip; when it's unavailable the
+# other three are renormalized, so ignition degrades gracefully to the snapshot.
 _FUEL_W = {"short_float": 0.45, "days_to_cover": 0.35, "low_float": 0.20}
-# Ignition = how hot the bullish chatter is; weights sum to 1.
-_IGNITION_W = {"volume": 0.50, "bullish": 0.30, "engagement": 0.20}
+_IGNITION_W = {"volume": 0.40, "bullish": 0.25, "engagement": 0.15, "velocity": 0.20}
 # Fuel-only floor: a primed name with zero ignition still scores this fraction.
 _IGNITION_FLOOR = 0.25
+
+
+def _velocity_term(velocity: Optional[float]) -> float:
+    """Acceleration term: 0 at/below 1x baseline (normal), 1.0 at _VELOCITY_SAT."""
+    if velocity is None:
+        return 0.0
+    return max(0.0, min((velocity - 1.0) / (_VELOCITY_SAT - 1.0), 1.0))
 
 
 def _sat(x: Optional[float], sat: float) -> float:
@@ -79,21 +88,27 @@ def _fuel_score(
 
 
 def _ignition_score(
-    focus_score: float, sentiment: float, engagement: float
+    focus_score: float,
+    sentiment: float,
+    engagement: float,
+    velocity: Optional[float] = None,
 ) -> tuple[float, dict[str, float]]:
-    """The trigger, 0..1: bullish chatter volume × lean × amplification.
-
-    Only *bullish* sentiment ignites a squeeze — bearish/neutral chatter on a
-    heavily shorted name is the shorts being right, not a squeeze, so the bullish
-    term floors at 0."""
-    vol = _sat(focus_score, _FOCUS_SAT)
-    bull = max(0.0, sentiment)
-    eng = min(1.0, math.log1p(max(0.0, engagement)) / math.log1p(_ENGAGEMENT_SAT))
-    ign = (_IGNITION_W["volume"] * vol
-           + _IGNITION_W["bullish"] * bull
-           + _IGNITION_W["engagement"] * eng)
-    return ign, {"volume": round(vol, 4), "bullish": round(bull, 4),
-                 "engagement": round(eng, 4)}
+    """The trigger, 0..1: bullish chatter volume × lean × amplification ×
+    acceleration. Only *bullish* sentiment ignites a squeeze (bearish/neutral on a
+    heavily shorted name is the shorts being right), so the bullish term floors at
+    0. ``velocity`` (gossip mention acceleration) adds the "is it taking off NOW"
+    dimension; when absent the other terms are renormalized so the score stays
+    comparable (graceful degradation to the live snapshot)."""
+    terms = {
+        "volume": _sat(focus_score, _FOCUS_SAT),
+        "bullish": max(0.0, sentiment),
+        "engagement": min(1.0, math.log1p(max(0.0, engagement)) / math.log1p(_ENGAGEMENT_SAT)),
+    }
+    if velocity is not None:
+        terms["velocity"] = _velocity_term(velocity)
+    wsum = sum(_IGNITION_W[k] for k in terms)
+    ign = sum(_IGNITION_W[k] * v for k, v in terms.items()) / wsum
+    return ign, {k: round(v, 4) for k, v in terms.items()}
 
 
 def _squeeze_score(fuel: float, ignition: float) -> float:
@@ -121,6 +136,7 @@ class SqueezeCandidate:
     n_posts: int = 0
     focus_score: float = 0.0
     social_sentiment: float = 0.0            # -1..1 (LM)
+    social_velocity: Optional[float] = None  # gossip mention acceleration (x baseline)
     engagement: int = 0
     fuel_score: float = 0.0                  # 0..1
     ignition_score: float = 0.0              # 0..1
@@ -136,8 +152,11 @@ def score_candidate(
     short: dict[str, Any],
     social: Optional[dict[str, Any]],
     sentiment: float,
+    velocity: Optional[float] = None,
 ) -> SqueezeCandidate:
-    """Combine short fuel + social ignition into a scored squeeze candidate."""
+    """Combine short fuel + social ignition into a scored squeeze candidate.
+    ``velocity`` is the gossip mention-acceleration (x baseline); None -> the
+    ignition uses the live snapshot only."""
     spf = short.get("short_pct_float")
     sr = short.get("short_ratio")
     fl = short.get("float_shares")
@@ -146,13 +165,15 @@ def score_candidate(
     focus = float(social.get("focus_score", 0.0)) if social else 0.0
     engagement = int(social.get("engagement", 0)) if social else 0
     n_posts = int(social.get("n_posts", 0)) if social else 0
-    ign, ign_c = _ignition_score(focus, sentiment, engagement)
+    ign, ign_c = _ignition_score(focus, sentiment, engagement, velocity)
 
     return SqueezeCandidate(
         ticker=ticker,
         short_pct_float=spf, short_ratio=sr, float_shares=fl,
         n_posts=n_posts, focus_score=round(focus, 3),
-        social_sentiment=round(sentiment, 4), engagement=engagement,
+        social_sentiment=round(sentiment, 4),
+        social_velocity=round(velocity, 2) if velocity is not None else None,
+        engagement=engagement,
         fuel_score=round(fuel, 4), ignition_score=round(ign, 4),
         squeeze_score=_squeeze_score(fuel, ign),
         direction=_direction(sentiment),
@@ -187,13 +208,15 @@ async def rank_squeezes(
     min_short_float: float = 0.10,
     max_fueled: int = 30,
     social_limit: int = 60,
+    social_collection: Any = None,
     now: Optional[datetime] = None,
 ) -> dict[str, Any]:
     """
     Run the full squeeze pipeline and return a ranking result dict (not persisted).
 
     universe -> short metrics (fuel) -> filter to genuinely-shorted names ->
-    per-ticker social (ignition) -> LM sentiment -> score -> rank.
+    per-ticker social snapshot (ignition) + gossip mention velocity (acceleration,
+    from ``social_collection`` if given) -> LM sentiment -> score -> rank.
     All data sources degrade gracefully (empty -> lower scores), never raise.
     """
     now = now or datetime.now(tz=timezone.utc)
@@ -213,8 +236,16 @@ async def rank_squeezes(
     fueled.sort(key=lambda t: shorts[t].get("short_pct_float") or 0.0, reverse=True)
     fueled = fueled[:max_fueled]
 
-    # 3) Ignition: per-ticker social, only for the fueled set.
+    # 3) Ignition: per-ticker social snapshot + gossip mention velocity (the
+    #    acceleration term, from the stored social stream when available).
     social = await gather_social(fueled, bluesky_limit=social_limit) if fueled else {}
+    velocities: dict[str, float] = {}
+    if fueled and social_collection is not None:
+        try:
+            from gossip import fetch_velocities
+            velocities = await fetch_velocities(social_collection, fueled, now=now)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("velocity fetch failed (%s) — ignition uses snapshot only", type(exc).__name__)
 
     # 4) Sentiment + score.
     try:
@@ -228,7 +259,7 @@ async def rank_squeezes(
     for t in fueled:
         s = social.get(t)
         sentiment = _social_sentiment(analyzer, s.get("texts", [])) if s else 0.0
-        candidates.append(score_candidate(t, shorts.get(t, {}), s, sentiment))
+        candidates.append(score_candidate(t, shorts.get(t, {}), s, sentiment, velocities.get(t)))
 
     candidates.sort(key=lambda c: c.squeeze_score, reverse=True)
     items = [asdict(c) for c in candidates[:top_k]]

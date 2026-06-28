@@ -48,6 +48,22 @@ def _direction(score: float) -> str:
     return "neutral"
 
 
+def _velocity_for(
+    times: list[datetime], now: datetime, recent_hours: float, baseline_days: float
+) -> tuple[int, float, float]:
+    """(recent_count, baseline_rate, velocity) for one ticker's mention times.
+
+    baseline_rate = mentions/recent-window over the period *before* the recent
+    window, floored so a name emerging from zero still yields a high velocity."""
+    recent_cut = now - timedelta(hours=recent_hours)
+    baseline_start = now - timedelta(days=baseline_days)
+    baseline_windows = max(1.0, (baseline_days * 24.0 - recent_hours) / recent_hours)
+    recent_count = sum(1 for t in times if t >= recent_cut)
+    prior = sum(1 for t in times if baseline_start <= t < recent_cut)
+    baseline_rate = max(prior / baseline_windows, _BASELINE_FLOOR)
+    return recent_count, round(baseline_rate, 3), recent_count / baseline_rate
+
+
 def score_gossip(
     mentions: dict[str, list[tuple[datetime, Optional[float]]]],
     *,
@@ -64,22 +80,15 @@ def score_gossip(
     and deterministic; ``now`` is injected so it's testable.
     """
     recent_cut = now - timedelta(hours=recent_hours)
-    baseline_start = now - timedelta(days=baseline_days)
-    # Length of the baseline period (everything before the recent window), in
-    # units of recent-window-lengths, to scale its count to a comparable rate.
-    baseline_windows = max(1.0, (baseline_days * 24.0 - recent_hours) / recent_hours)
 
     ranked: list[dict[str, Any]] = []
     for ticker, posts in mentions.items():
-        recent = [(t, s) for t, s in posts if t >= recent_cut]
-        recent_count = len(recent)
+        recent_count, baseline_rate, velocity = _velocity_for(
+            [t for t, _ in posts], now, recent_hours, baseline_days
+        )
         if recent_count < min_recent:
             continue
-        prior = [t for t, _ in posts if baseline_start <= t < recent_cut]
-        baseline_rate = max(len(prior) / baseline_windows, _BASELINE_FLOOR)
-        velocity = recent_count / baseline_rate
-
-        sents = [s for _, s in recent if s is not None]
+        sents = [s for t, s in posts if t >= recent_cut and s is not None]
         mean_sent = sum(sents) / len(sents) if sents else 0.0
 
         vel_term = min(velocity / _VELOCITY_SAT, 1.0)
@@ -144,3 +153,52 @@ async def detect_gossip(
         "post_count": len(docs),
         "items": items,
     }
+
+
+async def fetch_velocities(
+    social_collection: Any,
+    tickers: list[str],
+    *,
+    now: Optional[datetime] = None,
+    recent_hours: float = 6.0,
+    baseline_days: float = 7.0,
+) -> dict[str, float]:
+    """
+    ``{ticker: velocity}`` for specific tickers — the squeeze ranker uses this to
+    fold mention *acceleration* into its ignition. 0.0 for tickers with no recent
+    social. Never raises (-> {} on failure / no collection).
+    """
+    syms = [t.strip().upper() for t in dict.fromkeys(tickers) if t and t.strip()]
+    if social_collection is None or not syms:
+        return {}
+    now = now or datetime.now(tz=timezone.utc)
+    start = now - timedelta(days=baseline_days)
+    query = {
+        "published_at": {"$gte": start, "$lte": now},
+        "source_type": "social",
+        "tickers": {"$in": syms},
+    }
+    try:
+        docs = await (
+            social_collection.find(query, {"_id": 0, "tickers": 1, "published_at": 1})
+            .limit(50_000).to_list(length=50_000)
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("velocity fetch failed: %s", type(exc).__name__)
+        return {}
+
+    wanted = set(syms)
+    times: dict[str, list[datetime]] = defaultdict(list)
+    for d in docs:
+        pub = d.get("published_at")
+        if not isinstance(pub, datetime):
+            continue
+        for t in (d.get("tickers") or ()):
+            if t in wanted:
+                times[t].append(pub)
+
+    out: dict[str, float] = {}
+    for t in syms:
+        _, _, vel = _velocity_for(times.get(t, []), now, recent_hours, baseline_days)
+        out[t] = round(vel, 2)
+    return out

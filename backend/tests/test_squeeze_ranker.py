@@ -36,15 +36,37 @@ class TestFuelScore:
         assert small > big == 0.1   # 50e6/500e6
 
 
+class TestVelocityTerm:
+    def test_no_velocity_or_normal_is_zero(self):
+        assert sq._velocity_term(None) == 0.0
+        assert sq._velocity_term(1.0) == 0.0   # 1x baseline = not accelerating
+
+    def test_ramp_and_saturation(self):
+        assert sq._velocity_term(3.0) == 0.5   # halfway from 1x to 5x
+        assert sq._velocity_term(5.0) == 1.0
+        assert sq._velocity_term(10.0) == 1.0
+
+
 class TestIgnitionScore:
-    def test_max_ignition(self):
-        ign, c = sq._ignition_score(12.0, 1.0, 100.0)
+    def test_max_ignition_snapshot(self):
+        ign, _ = sq._ignition_score(12.0, 1.0, 100.0)   # no velocity -> 3 terms renormalized
+        assert abs(ign - 1.0) < 1e-9
+
+    def test_max_ignition_with_velocity(self):
+        ign, c = sq._ignition_score(12.0, 1.0, 100.0, velocity=5.0)
+        assert "velocity" in c and c["velocity"] == 1.0
         assert abs(ign - 1.0) < 1e-9
 
     def test_bearish_sentiment_zeroes_bull_term(self):
         ign, c = sq._ignition_score(12.0, -0.5, 100.0)
-        assert c["bullish"] == 0.0           # only bullish chatter ignites
-        assert abs(ign - 0.70) < 1e-9        # volume(0.5) + engagement(0.2)
+        assert c["bullish"] == 0.0                     # only bullish chatter ignites
+        # snapshot weights renormalized: (0.40*1 + 0.25*0 + 0.15*1)/0.80
+        assert abs(ign - 0.6875) < 1e-9
+
+    def test_velocity_alone_contributes(self):
+        # quiet snapshot but accelerating mentions -> nonzero ignition
+        ign, _ = sq._ignition_score(0.0, 0.0, 0.0, velocity=5.0)
+        assert abs(ign - 0.20) < 1e-9                  # only the velocity weight
 
     def test_quiet_is_zero(self):
         ign, _ = sq._ignition_score(0.0, 0.0, 0.0)
@@ -88,6 +110,15 @@ class TestScoreCandidate:
         assert firing.squeeze_score > primed.squeeze_score
         assert firing.direction == "bullish"
         assert firing.n_posts == 30
+
+    def test_velocity_records_and_lifts_ignition(self):
+        short = {"short_pct_float": 0.30, "short_ratio": 5.0, "float_shares": 40e6}
+        social = {"focus_score": 6.0, "engagement": 20, "n_posts": 10,
+                  "sources": ["bluesky"], "top_posts": []}
+        flat = sq.score_candidate("X", short, social, 0.2, velocity=1.0)  # not accelerating
+        hot = sq.score_candidate("X", short, social, 0.2, velocity=5.0)   # accelerating
+        assert hot.social_velocity == 5.0
+        assert hot.ignition_score > flat.ignition_score
 
 
 class TestGradeSqueeze:
