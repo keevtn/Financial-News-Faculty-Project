@@ -120,6 +120,36 @@ export interface TickerHistory {
 
 export type ChartRange = "1D" | "5D" | "1M" | "3M" | "1Y";
 
+export interface SentimentPoint {
+  time: number;            // UTC epoch seconds (day start)
+  mean_sentiment: number;  // -1..1
+  count: number;           // mentions that day
+}
+
+export interface SentimentHistory {
+  symbol: string;
+  days: number;
+  points: SentimentPoint[];
+  status: string | null;
+}
+
+/** Daily mean sentiment + mention count for a ticker (news + social), for the
+ *  sentiment chart shown alongside price. */
+export async function fetchTickerSentimentHistory(
+  symbol: string,
+  days = 30,
+): Promise<SentimentHistory | null> {
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/tickers/sentiment-history?symbol=${encodeURIComponent(symbol)}&days=${days}`
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as SentimentHistory;
+  } catch {
+    return null;
+  }
+}
+
 /** OHLCV candlestick history for one ticker over a range. */
 export async function fetchTickerHistory(
   symbol: string,

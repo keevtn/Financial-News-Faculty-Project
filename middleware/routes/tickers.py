@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 
 router = APIRouter()
 
@@ -227,3 +229,51 @@ async def get_ticker_history(
     if not sym:
         return {"symbol": "", "range": range_key, "bars": [], "status": "no symbol"}
     return await asyncio.to_thread(_fetch_history_sync, sym, range_key)
+
+
+# --- sentiment history (news + social, for the chart-alongside-price view) --- #
+
+@router.get("/sentiment-history")
+async def get_ticker_sentiment_history(
+    request: Request,
+    symbol: str = Query(..., description="Single ticker symbol"),
+    days: int = Query(default=30, ge=1, le=180),
+) -> dict[str, Any]:
+    """
+    Daily mean sentiment + mention count for a ticker from the stored news/social
+    items, shaped for a chart shown alongside the price candles. Spans only as far
+    back as the corpus has been ingested.
+    """
+    sym = symbol.strip().upper()
+    coll = getattr(request.app.state, "news_collection", None)
+    if not sym or coll is None:
+        return {"symbol": sym, "days": days, "points": [], "status": "unavailable"}
+
+    start = datetime.now(tz=timezone.utc) - timedelta(days=days)
+    query = {"tickers": sym, "published_at": {"$gte": start}, "sentiment.score": {"$exists": True}}
+    try:
+        docs = await (
+            coll.find(query, {"_id": 0, "published_at": 1, "sentiment.score": 1})
+            .limit(20_000).to_list(length=20_000)
+        )
+    except Exception:  # noqa: BLE001
+        return {"symbol": sym, "days": days, "points": [], "status": "query failed"}
+
+    buckets: dict[Any, list[float]] = defaultdict(lambda: [0.0, 0.0])  # day -> [count, sum]
+    for d in docs:
+        pub = d.get("published_at")
+        score = (d.get("sentiment") or {}).get("score")
+        if not isinstance(pub, datetime) or score is None:
+            continue
+        day = pub.date()
+        buckets[day][0] += 1
+        buckets[day][1] += float(score)
+
+    points = []
+    for day in sorted(buckets):
+        cnt, total = buckets[day]
+        ts = int(datetime(day.year, day.month, day.day, tzinfo=timezone.utc).timestamp())
+        points.append({"time": ts, "mean_sentiment": round(total / cnt, 4), "count": int(cnt)})
+
+    return {"symbol": sym, "days": days, "points": points,
+            "status": None if points else "no sentiment data"}

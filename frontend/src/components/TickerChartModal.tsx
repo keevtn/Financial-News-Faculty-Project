@@ -5,8 +5,9 @@ import dynamic from "next/dynamic";
 
 import OptionsReadout from "./OptionsReadout";
 
-// Load the chart client-side only (lightweight-charts touches the DOM/canvas).
+// Load charts client-side only (lightweight-charts touches the DOM/canvas).
 const TickerChart = dynamic(() => import("./TickerChart"), { ssr: false });
+const SentimentChart = dynamic(() => import("./SentimentChart"), { ssr: false });
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])';
@@ -64,9 +65,9 @@ export default function TickerChartModal({
         ref={panelRef}
         role="dialog"
         aria-modal="true"
-        aria-label={`${symbol} price chart`}
+        aria-label={`${symbol} price and sentiment charts`}
         tabIndex={-1}
-        className="bg-[#0f1629] border border-[#1e2d4a] rounded-lg w-full max-w-3xl p-4 shadow-xl focus:outline-none"
+        className="bg-[#0f1629] border border-[#1e2d4a] rounded-lg w-full max-w-5xl p-4 shadow-xl focus:outline-none max-h-[92vh] overflow-y-auto scrollbar-thin"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-3">
@@ -89,7 +90,18 @@ export default function TickerChartModal({
             <span aria-hidden="true">✕</span>
           </button>
         </div>
-        <TickerChart symbol={symbol} />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-slate-400 mb-1">Price</p>
+            <TickerChart symbol={symbol} />
+          </div>
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-slate-400 mb-1">
+              News &amp; social sentiment
+            </p>
+            <SentimentChart symbol={symbol} />
+          </div>
+        </div>
         <OptionsReadout symbol={symbol} />
       </div>
     </div>
