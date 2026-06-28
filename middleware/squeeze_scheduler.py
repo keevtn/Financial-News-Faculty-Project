@@ -66,9 +66,16 @@ async def _tick(app: Any) -> None:
     coll = getattr(app.state, "squeeze_collection", None)
     if coll is None:
         return
-    from squeeze_ranker import get_latest_squeeze, rank_squeezes, save_squeeze_ranking
+    from squeeze_ranker import (
+        get_latest_squeeze,
+        grade_squeeze_run,
+        rank_squeezes,
+        save_squeeze_ranking,
+    )
 
     now = datetime.now(tz=timezone.utc)
+
+    # 1) Refresh the ranking on the configured cadence.
     try:
         latest = await get_latest_squeeze(coll)
         latest_gen = latest.get("generated_at") if latest else None
@@ -83,7 +90,21 @@ async def _tick(app: Any) -> None:
             log.info("squeeze scheduler: saved run_id=%s (%d ranked, %d fueled)",
                      result.get("run_id"), len(result.get("items", [])), result.get("fueled_count"))
     except Exception as exc:  # noqa: BLE001
-        log.error("squeeze scheduler tick failed: %s", exc)
+        log.error("squeeze scheduler run step failed: %s", exc)
+
+    # 2) Auto-grade ungraded runs whose window has fully closed.
+    try:
+        ungraded = await (
+            coll.find({"metrics": {"$exists": False}}, {"_id": 0})
+            .sort("generated_at", -1).limit(20).to_list(length=20)
+        )
+        for run_doc in ungraded:
+            metrics = await grade_squeeze_run(coll, run_doc, now=now)
+            if metrics is not None:
+                log.info("squeeze scheduler: graded run %s (hit_rate=%s)",
+                         run_doc.get("run_id"), metrics.get("squeeze_hit_rate"))
+    except Exception as exc:  # noqa: BLE001
+        log.error("squeeze scheduler grade step failed: %s", exc)
 
 
 async def _loop(app: Any, interval: float) -> None:

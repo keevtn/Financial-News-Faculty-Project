@@ -88,3 +88,29 @@ class TestScoreCandidate:
         assert firing.squeeze_score > primed.squeeze_score
         assert firing.direction == "bullish"
         assert firing.n_posts == 30
+
+
+class TestGradeSqueeze:
+    _RESULT = {"items": [{"ticker": "A", "rank": 1}, {"ticker": "B", "rank": 2}]}
+
+    def test_hit_rate_and_separation(self):
+        windows = {
+            "A": {"entry": 10.0, "max_high": 13.0, "last_close": 12.0},  # +30% peak -> squeezed
+            "B": {"entry": 10.0, "max_high": 10.5, "last_close": 9.0},   # +5% peak  -> no
+        }
+        m = sq.grade_squeeze(self._RESULT, windows, hit_threshold=0.15)
+        assert m["graded"] == 2
+        assert m["squeeze_hit_rate"] == 0.5
+        assert m["reaction_separation"] == 0.25            # top(0.30) - bottom(0.05)
+        assert abs(m["mean_close_return"] - 0.05) < 1e-9    # (+0.20, -0.10)/2
+        assert m["per_ticker"][0]["squeezed"] is True
+
+    def test_no_price_data(self):
+        assert sq.grade_squeeze(self._RESULT, {})["graded"] == 0
+
+    def test_threshold_respected(self):
+        windows = {"A": {"entry": 10.0, "max_high": 11.0, "last_close": 11.0},  # +10%
+                   "B": {"entry": 10.0, "max_high": 10.2, "last_close": 10.1}}
+        # at 0.08 threshold A squeezes, B doesn't
+        m = sq.grade_squeeze(self._RESULT, windows, hit_threshold=0.08)
+        assert m["squeeze_hit_rate"] == 0.5

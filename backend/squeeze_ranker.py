@@ -29,11 +29,12 @@ load) and unit-tested; the orchestrator imports the data sources lazily.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 log = logging.getLogger("squeeze_ranker")
@@ -266,3 +267,137 @@ async def get_latest_squeeze(collection: Any) -> Optional[dict[str, Any]]:
         .sort("generated_at", -1).limit(1).to_list(length=1)
     )
     return docs[0] if docs else None
+
+
+# --- Evaluation ------------------------------------------------------------ #
+
+# Default max-gain within the window that counts a name as having "squeezed".
+SQUEEZE_HIT_THRESHOLD = 0.15  # +15% intraday peak vs entry
+SQUEEZE_WINDOW_DAYS = 5       # trading days a squeeze is given to play out
+
+
+def grade_squeeze(
+    result: dict[str, Any],
+    price_windows: dict[str, dict[str, float]],
+    *,
+    hit_threshold: float = SQUEEZE_HIT_THRESHOLD,
+) -> dict[str, Any]:
+    """
+    Did the ranked names actually squeeze? Directional (a squeeze is an *up* move),
+    unlike the catalyst's direction-agnostic grade.
+
+    ``price_windows`` maps ticker -> {"entry", "max_high", "last_close"} over the
+    window that followed the ranking. Per ticker: ``max_gain`` (peak vs entry —
+    the squeeze realization) and ``close_return``. Then a hit-rate (share that hit
+    ``hit_threshold``) and a top-half-vs-bottom-half max-gain separation (did the
+    ranking put the bigger poppers on top?). Ungraded tickers are skipped.
+    """
+    graded = []
+    for it in result.get("items", []):
+        pw = price_windows.get(it["ticker"])
+        if not pw or not pw.get("entry"):
+            continue
+        entry = pw["entry"]
+        max_gain = (pw["max_high"] - entry) / entry
+        close_return = (pw["last_close"] - entry) / entry
+        graded.append({
+            "ticker": it["ticker"],
+            "rank": it["rank"],
+            "max_gain": round(max_gain, 5),
+            "close_return": round(close_return, 5),
+            "squeezed": max_gain >= hit_threshold,
+        })
+
+    if not graded:
+        return {"graded": 0, "note": "no price data available for graded tickers"}
+
+    graded.sort(key=lambda g: g["rank"])
+    mid = max(1, len(graded) // 2)
+    top, bottom = graded[:mid], graded[mid:]
+    top_gain = sum(g["max_gain"] for g in top) / len(top)
+    bottom_gain = sum(g["max_gain"] for g in bottom) / len(bottom) if bottom else 0.0
+
+    return {
+        "graded": len(graded),
+        "hit_threshold": hit_threshold,
+        "squeeze_hit_rate": round(sum(1 for g in graded if g["squeezed"]) / len(graded), 3),
+        "avg_max_gain_top": round(top_gain, 5),
+        "avg_max_gain_bottom": round(bottom_gain, 5),
+        "reaction_separation": round(top_gain - bottom_gain, 5),
+        "mean_close_return": round(sum(g["close_return"] for g in graded) / len(graded), 5),
+        "per_ticker": graded,
+    }
+
+
+def _fetch_squeeze_window_sync(
+    tickers: list[str], start_date: str, end_date: str
+) -> dict[str, dict[str, float]]:
+    """Daily OHLC over [start, end) per ticker via yfinance. entry = first open,
+    max_high = window peak, last_close = final close. Sync — call via to_thread."""
+    import yfinance as yf
+
+    out: dict[str, dict[str, float]] = {}
+    for sym in tickers:
+        try:
+            df = yf.Ticker(sym).history(start=start_date, end=end_date, interval="1d")
+            if df is None or df.empty:
+                continue
+            out[sym] = {
+                "entry": float(df.iloc[0]["Open"]),
+                "max_high": float(df["High"].max()),
+                "last_close": float(df.iloc[-1]["Close"]),
+            }
+        except Exception as exc:  # noqa: BLE001
+            log.warning("squeeze price fetch failed for %s: %s", sym, exc)
+    return out
+
+
+def _window_close(generated_at: datetime, window_days: int) -> datetime:
+    """UTC close of the Nth trading session after ``generated_at`` (the point at
+    which a run becomes fully gradeable)."""
+    from market_calendar import next_session_bounds, next_trading_day, session_close
+
+    sess_open, _ = next_session_bounds(generated_at)
+    d = sess_open.date()
+    for _ in range(max(1, window_days) - 1):
+        d = next_trading_day(d)
+    return session_close(d)
+
+
+async def grade_squeeze_run(
+    collection: Any,
+    run_doc: dict[str, Any],
+    *,
+    now: Optional[datetime] = None,
+    window_days: int = SQUEEZE_WINDOW_DAYS,
+    hit_threshold: float = SQUEEZE_HIT_THRESHOLD,
+) -> Optional[dict[str, Any]]:
+    """
+    Grade one run against the ``window_days`` sessions that followed it, persisting
+    the metrics. Returns the metrics, or ``None`` if it can't be graded yet (no
+    usable timestamp, or the window hasn't fully closed).
+    """
+    now = now or datetime.now(tz=timezone.utc)
+    generated_at = run_doc.get("generated_at")
+    if not isinstance(generated_at, datetime):
+        return None
+
+    from market_calendar import next_session_bounds
+
+    sess_open, _ = next_session_bounds(generated_at)
+    window_close = _window_close(generated_at, window_days)
+    if now < window_close:
+        return None  # window still open
+
+    tickers = [it["ticker"] for it in run_doc.get("items", [])]
+    start_date = sess_open.date().isoformat()
+    end_date = (window_close.date() + timedelta(days=1)).isoformat()  # yfinance end exclusive
+    prices = await asyncio.to_thread(_fetch_squeeze_window_sync, tickers, start_date, end_date)
+
+    metrics = grade_squeeze(run_doc, prices, hit_threshold=hit_threshold)
+    metrics["window_start"] = sess_open.isoformat()
+    metrics["window_close"] = window_close.isoformat()
+    metrics["window_days"] = window_days
+
+    await collection.update_one({"run_id": run_doc["run_id"]}, {"$set": {"metrics": metrics}})
+    return metrics

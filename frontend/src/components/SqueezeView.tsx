@@ -5,7 +5,9 @@ import {
   Direction,
   SqueezeItem,
   SqueezeRanking,
+  SqueezeTrackRecord,
   fetchLatestSqueeze,
+  fetchSqueezeTrackRecord,
 } from "@/lib/api";
 import { formatDistanceToNow } from "@/lib/time";
 import ChartIconButton from "./ChartIconButton";
@@ -180,15 +182,65 @@ function SqueezeCard({ item }: { item: SqueezeItem }) {
   );
 }
 
+// ── Track record ──────────────────────────────────────────────────────────────
+
+function TrackRecordPanel({ tr }: { tr: SqueezeTrackRecord }) {
+  const s = tr.summary;
+  const pct = (n: number | null) => (n == null ? "—" : `${(n * 100).toFixed(0)}%`);
+  const signed = (n: number | null) => (n == null ? "—" : `${n > 0 ? "+" : ""}${(n * 100).toFixed(1)}%`);
+
+  return (
+    <div className="max-w-3xl mx-auto mb-4 bg-[#0f1629] border border-[#1e2d4a] rounded-lg px-4 py-3">
+      <div className="flex items-center justify-between mb-2.5">
+        <span className="text-[10px] uppercase tracking-widest text-slate-400">Track Record</span>
+        <span className="text-[10px] text-slate-400">
+          {s.graded_runs} graded run{s.graded_runs === 1 ? "" : "s"}
+        </span>
+      </div>
+      {s.graded_runs === 0 ? (
+        <p className="text-xs text-slate-400 leading-relaxed">
+          No graded runs yet — performance appears automatically once a ranking&apos;s
+          5-session window closes and is graded against realized peak gains.
+        </p>
+      ) : (
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <div className="text-lg font-bold font-mono leading-none text-slate-200">{pct(s.avg_squeeze_hit_rate)}</div>
+            <div className="text-[10px] text-slate-400 mt-1">Squeeze hit-rate</div>
+            <div className="text-[9px] text-slate-400 leading-tight">ranked names that popped ≥ threshold</div>
+          </div>
+          <div>
+            <div className={`text-lg font-bold font-mono leading-none ${s.avg_reaction_separation == null ? "text-slate-200" : s.avg_reaction_separation > 0 ? "text-emerald-400" : "text-red-400"}`}>
+              {signed(s.avg_reaction_separation)}
+            </div>
+            <div className="text-[10px] text-slate-400 mt-1">Reaction separation</div>
+            <div className="text-[9px] text-slate-400 leading-tight">top-half vs bottom-half peak gain</div>
+          </div>
+          <div>
+            <div className={`text-lg font-bold font-mono leading-none ${s.avg_close_return == null ? "text-slate-200" : s.avg_close_return > 0 ? "text-emerald-400" : "text-red-400"}`}>
+              {signed(s.avg_close_return)}
+            </div>
+            <div className="text-[10px] text-slate-400 mt-1">Avg window return</div>
+            <div className="text-[9px] text-slate-400 leading-tight">mean close return over the window</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main view ─────────────────────────────────────────────────────────────────
 
 export default function SqueezeView() {
   const [ranking, setRanking] = useState<SqueezeRanking | null>(null);
+  const [trackRecord, setTrackRecord] = useState<SqueezeTrackRecord | null>(null);
   const [loading, setLoading] = useState(true);
 
   async function load() {
     setLoading(true);
-    setRanking(await fetchLatestSqueeze());
+    const [r, tr] = await Promise.all([fetchLatestSqueeze(), fetchSqueezeTrackRecord()]);
+    setRanking(r);
+    setTrackRecord(tr);
     setLoading(false);
   }
 
@@ -229,6 +281,7 @@ export default function SqueezeView() {
 
       {/* body */}
       <div className="p-6">
+        {trackRecord && <TrackRecordPanel tr={trackRecord} />}
         {loading && !ranking ? (
           <p className="text-sm text-slate-400">Loading latest squeeze ranking…</p>
         ) : !ranking ? (

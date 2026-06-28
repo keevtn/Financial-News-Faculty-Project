@@ -344,6 +344,32 @@ export async function fetchLatestSqueeze(): Promise<SqueezeRanking | null> {
   }
 }
 
+export interface SqueezeTrackRecord {
+  summary: {
+    graded_runs: number;
+    avg_squeeze_hit_rate: number | null;    // 0..1
+    avg_reaction_separation: number | null;  // top-half vs bottom-half peak gain
+    avg_close_return: number | null;
+  };
+  runs: Array<{
+    run_id: string;
+    generated_at: string;
+    squeeze_hit_rate: number | null;
+    reaction_separation: number | null;
+  }>;
+}
+
+/** The squeeze ranker's measured performance across graded runs (public read). */
+export async function fetchSqueezeTrackRecord(): Promise<SqueezeTrackRecord | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/squeeze/track-record`);
+    if (!res.ok) return null;
+    return (await res.json()) as SqueezeTrackRecord;
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Numeric screener — market-wide movers from Finviz (read-only)
 // ---------------------------------------------------------------------------
