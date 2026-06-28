@@ -5,6 +5,7 @@ import { NewsItem, SentimentLabel, SocialFilterState, SortBy } from "@/types/new
 import { ALL_SENTIMENTS, ALL_PLATFORMS } from "@/lib/mockData";
 import SocialFeed from "@/components/SocialFeed";
 import StatsBar from "@/components/StatsBar";
+import GossipPanel from "@/components/GossipPanel";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -376,6 +377,7 @@ export default function UnstructuredView({
       <div className="flex flex-1 overflow-hidden">
         <SocialFilterSidebar filters={filters} onChange={onChange} tickerCounts={tickerCounts} />
         <SocialFeed items={items} scoringPending={scoringPending} />
+        <GossipPanel />
       </div>
     </div>
   );

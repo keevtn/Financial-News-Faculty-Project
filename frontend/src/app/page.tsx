@@ -12,7 +12,6 @@ import TabNav, { TabId } from "@/components/TabNav";
 import UnstructuredView from "@/components/UnstructuredView";
 import CatalystView from "@/components/CatalystView";
 import SqueezeView from "@/components/SqueezeView";
-import GossipView from "@/components/GossipView";
 import AlertsView from "@/components/AlertsView";
 import ValidationView from "@/components/ValidationView";
 import ScreenerView from "@/components/ScreenerView";
@@ -327,8 +326,6 @@ export default function HomePage() {
         <CatalystView />
       ) : activeTab === "squeeze" ? (
         <SqueezeView />
-      ) : activeTab === "gossip" ? (
-        <GossipView />
       ) : activeTab === "alerts" ? (
         <AlertsView />
       ) : activeTab === "validation" ? (
