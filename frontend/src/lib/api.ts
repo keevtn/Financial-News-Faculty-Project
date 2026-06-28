@@ -372,6 +372,36 @@ export async function fetchSqueezeTrackRecord(): Promise<SqueezeTrackRecord | nu
 }
 
 // ---------------------------------------------------------------------------
+// Options flow — per-ticker put/call + implied vol (yfinance, read-only)
+// ---------------------------------------------------------------------------
+
+export interface OptionsSignal {
+  ticker: string;
+  spot: number | null;
+  put_call_ratio: number | null;     // by volume
+  put_call_oi_ratio: number | null;  // by open interest
+  atm_iv: number | null;             // fraction (0.39 = 39%)
+  lean: Direction;
+  call_volume: number;
+  put_volume: number;
+  call_oi: number;
+  put_oi: number;
+  expiries: string[];
+}
+
+/** Per-ticker options signal (put/call ratio, ATM IV, lean), or null if no chain. */
+export async function fetchOptions(symbol: string): Promise<OptionsSignal | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/options?symbol=${encodeURIComponent(symbol)}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return (data.signal ?? null) as OptionsSignal | null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Alerts — signal thresholds crossed (squeeze / gossip / catalyst), read-only
 // ---------------------------------------------------------------------------
 

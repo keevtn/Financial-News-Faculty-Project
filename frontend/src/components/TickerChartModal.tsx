@@ -3,6 +3,8 @@
 import { useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 
+import OptionsReadout from "./OptionsReadout";
+
 // Load the chart client-side only (lightweight-charts touches the DOM/canvas).
 const TickerChart = dynamic(() => import("./TickerChart"), { ssr: false });
 
@@ -88,6 +90,7 @@ export default function TickerChartModal({
           </button>
         </div>
         <TickerChart symbol={symbol} />
+        <OptionsReadout symbol={symbol} />
       </div>
     </div>
   );
