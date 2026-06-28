@@ -8,8 +8,10 @@ Numeric stock-screener endpoints.
 
 Source is chosen at request time: **Finviz Elite** (authorized CSV export) when
 ``FINVIZ_AUTH_TOKEN`` is configured, otherwise the **Yahoo** source
-(``market_screener``). Public reads (the dashboard Screener tab uses them);
-results are cached in-process for a short TTL and the route is rate-limited.
+(``market_screener``). If Elite is configured but fails (e.g. a rotated/stale
+token 401s), the request transparently falls back to Yahoo so the screener never
+blanks — see ``screener_fallback``. Public reads (the dashboard Screener tab uses
+them); results are cached in-process for a short TTL and the route is rate-limited.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from fastapi import APIRouter, Query, Request
 
 import finviz_elite
 import market_screener
+from screener_fallback import run_with_fallback
 from middleware.limiter import limiter
 
 log = logging.getLogger("middleware.routes.screener")
@@ -69,8 +72,8 @@ async def screen(
     ``status`` is non-null only when the source was unreachable / unparseable
     (rows will be empty) so the UI can explain a blank table.
     """
-    name, _p, _l, fetch_fn = _source()
-    key = (name, preset, filters or "", limit)
+    primary_name, _p, _l, fetch_fn = _source()
+    key = (primary_name, preset, filters or "", limit)
     now = time.monotonic()
 
     hit = _CACHE.get(key)
@@ -79,8 +82,19 @@ async def screen(
         payload["cached"] = True
         return payload
 
-    result = await fetch_fn(preset=preset, filters=filters, limit=limit)
-    payload = {"source": name, **result, "cached": False, "fetched_at": time.time()}
+    # Run the primary source; if Finviz Elite is configured but failing (stale
+    # token / block / no rows), drop to the Yahoo source so a dead token degrades
+    # to delayed data instead of blanking the screener.
+    source_name, result = await run_with_fallback(
+        preset=preset, filters=filters, limit=limit,
+        primary_name=primary_name, primary_fetch=fetch_fn,
+        fallback_fetch=market_screener.fetch_screener,
+    )
+    if source_name != primary_name:
+        log.warning("screener: %s failed, served %s fallback", primary_name, source_name)
+
+    # source_name last so it reflects what actually served (Yahoo on fallback).
+    payload = {**result, "source": source_name, "cached": False, "fetched_at": time.time()}
 
     # Only cache successful (non-empty) results so a transient failure isn't
     # pinned for the full TTL.
