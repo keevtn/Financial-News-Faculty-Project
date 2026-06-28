@@ -78,6 +78,7 @@ from IngestionModule import (
     BLUESKY_SEARCH_TERMS,
     _SeenCache,  # same dedup cache used by structured sources
 )
+from social_filter import is_nsfw_post
 
 log = logging.getLogger("unstructured_agent")
 
@@ -302,6 +303,8 @@ class BlueskyExtractor:
                 data: dict[str, Any] = await resp.json(content_type=None)
 
             for post in data.get("posts", []):
+                if is_nsfw_post(post):   # drop adult/spam (labelled or blocklisted)
+                    continue
                 record = post.get("record", {})
                 author = post.get("author", {})
                 text: str = record.get("text", "").strip()

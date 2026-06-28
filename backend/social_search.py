@@ -99,7 +99,10 @@ async def search_bluesky_cashtag(
                 log.debug("bluesky cashtag %s HTTP %s", sym, resp.status)
                 return []
             data = await resp.json(content_type=None)
+        from social_filter import is_nsfw_post
         for p in data.get("posts", []):
+            if is_nsfw_post(p):   # drop adult/spam (labelled or blocklisted)
+                continue
             rec = p.get("record", {})
             text = (rec.get("text") or "").strip()
             if not text:
