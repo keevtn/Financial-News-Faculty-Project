@@ -77,16 +77,23 @@ export default function GossipPanel() {
   const [result, setResult] = useState<GossipResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [showAbout, setShowAbout] = useState(false);
-
-  async function load() {
-    setLoading(true);
-    setResult(await fetchGossip());
-    setLoading(false);
-  }
+  const [recentHours, setRecentHours] = useState(6);
+  const [baselineDays, setBaselineDays] = useState(7);
+  const [tick, setTick] = useState(0); // manual refresh
 
   useEffect(() => {
-    load();
-  }, []);
+    let cancelled = false;
+    setLoading(true);
+    fetchGossip(recentHours, baselineDays).then((r) => {
+      if (!cancelled) {
+        setResult(r);
+        setLoading(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [recentHours, baselineDays, tick]);
 
   const items = result?.items ?? [];
 
@@ -107,14 +114,40 @@ export default function GossipPanel() {
             ?
           </button>
           <button
-            onClick={load}
+            onClick={() => setTick((t) => t + 1)}
             disabled={loading}
+            aria-label="Refresh"
             className="ml-auto text-[10px] uppercase tracking-wider text-slate-400 hover:text-[#00d4aa] transition-colors disabled:opacity-50"
           >
             {loading ? "…" : "↻"}
           </button>
         </div>
-        <p className="text-[10px] text-slate-400 mt-0.5">Accelerating social chatter</p>
+        {/* recency window: recent vs baseline */}
+        <div className="flex items-center gap-1.5 mt-1.5 text-[10px] text-slate-400">
+          <span>Recent</span>
+          <select
+            aria-label="Recent window"
+            value={recentHours}
+            onChange={(e) => setRecentHours(Number(e.target.value))}
+            className="bg-[#0f1629] border border-[#1e2d4a] rounded px-1 py-0.5 text-slate-200 focus:outline-none focus:border-[#00d4aa]"
+          >
+            {[1, 2, 4, 6, 12, 24].map((h) => (
+              <option key={h} value={h}>{h}h</option>
+            ))}
+          </select>
+          <span>vs</span>
+          <select
+            aria-label="Baseline window"
+            value={baselineDays}
+            onChange={(e) => setBaselineDays(Number(e.target.value))}
+            className="bg-[#0f1629] border border-[#1e2d4a] rounded px-1 py-0.5 text-slate-200 focus:outline-none focus:border-[#00d4aa]"
+          >
+            {[3, 7, 14, 30].map((d) => (
+              <option key={d} value={d}>{d}d</option>
+            ))}
+          </select>
+          <span>baseline</span>
+        </div>
       </div>
 
       {showAbout && <About params={result?.params} />}

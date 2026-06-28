@@ -528,10 +528,19 @@ export interface GossipResult {
   cached?: boolean;
 }
 
-/** Tickers whose social chatter is accelerating vs their own baseline. Public read. */
-export async function fetchGossip(): Promise<GossipResult | null> {
+/** Tickers whose social chatter is accelerating vs their own baseline. Public read.
+ *  `recentHours` = the recent window; `baselineDays` = the trailing baseline it's
+ *  compared against (e.g. last 4h vs a 7-day baseline). */
+export async function fetchGossip(
+  recentHours = 6,
+  baselineDays = 7,
+): Promise<GossipResult | null> {
   try {
-    const res = await fetch(`${API_BASE}/api/gossip`);
+    const params = new URLSearchParams({
+      recent_hours: String(recentHours),
+      baseline_days: String(baselineDays),
+    });
+    const res = await fetch(`${API_BASE}/api/gossip?${params}`);
     if (!res.ok) return null;
     return (await res.json()) as GossipResult;
   } catch {
