@@ -645,6 +645,29 @@ async def _fetch_premarket_safe(tickers: list[str]) -> dict[str, dict[str, Any]]
         return {}
 
 
+async def _resolve_market_caps(
+    tickers: list[str], premarket: dict[str, dict[str, Any]]
+) -> dict[str, float]:
+    """
+    Market caps, **Finviz Elite preferred, Yahoo fallback**. The pre-market call
+    already returns each ticker's cap, so those come free (no extra request);
+    Yahoo only fills the names Finviz didn't cover (or all of them when there's no
+    Elite token). Degrades to size-neutral scoring if both are empty.
+    """
+    if not tickers:
+        return {}
+    finviz_caps = {
+        t: pm["market_cap"] for t, pm in premarket.items()
+        if pm.get("market_cap") is not None
+    }
+    missing = [t for t in tickers if t not in finviz_caps]
+    yahoo_caps = await _fetch_market_caps_safe(missing) if missing else {}
+    if finviz_caps:
+        log.info("market caps: %d finviz elite + %d yahoo fallback",
+                 len(finviz_caps), len(yahoo_caps))
+    return {**yahoo_caps, **finviz_caps}  # finviz wins on any overlap
+
+
 async def rank_catalysts(
     collection: Any,
     *,
@@ -672,16 +695,12 @@ async def rank_catalysts(
             ticker_extractor = None
 
     candidates = build_candidates(docs, baseline, ticker_extractor=ticker_extractor)
-    # Size-adjust scoring with market caps (Yahoo). Fetch only for the
-    # volume-qualified tickers to keep the lookup small; degrade to size-neutral
-    # scoring if the screener is unreachable.
+    # Fetch only for the volume-qualified tickers to keep the lookup small.
     qualified_tickers = [c.ticker for c in candidates if c.n_sources >= min_sources]
-    # Resolve size + pre-market signals concurrently (Yahoo caps, Finviz Elite
-    # pre-market). Both degrade to neutral on failure / when Elite isn't set up.
-    market_caps, premarket = await asyncio.gather(
-        _fetch_market_caps_safe(qualified_tickers),
-        _fetch_premarket_safe(qualified_tickers),
-    )
+    # Pre-market signal from Finviz Elite — which also carries market cap, so
+    # those caps are preferred and Yahoo only fills the rest (see _resolve_market_caps).
+    premarket = await _fetch_premarket_safe(qualified_tickers)
+    market_caps = await _resolve_market_caps(qualified_tickers, premarket)
     ranked = score_candidates(
         candidates, min_sources=min_sources,
         market_caps=market_caps, premarket=premarket,

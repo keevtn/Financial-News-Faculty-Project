@@ -41,9 +41,10 @@ _REQUEST_TIMEOUT = 20
 # Price/Change/Volume already reflect extended-hours trading (only *after*-hours
 # is broken out separately). So the pre-market gap = current price vs prev close,
 # and Relative Volume is the (pre-computed) volume-confirmation ratio.
-#   1=Ticker  61=Gap  64=Relative Volume  65=Price  66=Change  81=Prev Close
+# Market Cap (6) rides along so the catalyst ranker gets caps from the same call.
+#   1=Ticker  6=Market Cap  61=Gap  64=Relative Volume  65=Price  66=Change  81=Prev Close
 _PM_VIEW = "152"
-_PM_COLS = "1,61,64,65,66,81"
+_PM_COLS = "1,6,61,64,65,66,81"
 
 # friendly id -> (Finviz signal `s=`, order `o=`, human label)
 _PRESETS: dict[str, tuple[str, str, str]] = {
@@ -332,5 +333,6 @@ async def fetch_premarket(
             "price": price,
             "prev_close": prev,
             "change_pct": change,
+            "market_cap": _market_cap(d.get("Market Cap")),
         }
     return out

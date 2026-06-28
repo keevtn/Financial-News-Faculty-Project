@@ -1,5 +1,7 @@
 """Unit tests for the catalyst ranker's pure scoring + feature logic."""
 
+import asyncio
+
 import catalyst_ranker as cr
 from catalyst_ranker import CandidateFeatures
 
@@ -178,3 +180,26 @@ def test_grade_ranking_separation_and_hit_rate():
 def test_grade_ranking_no_price_data():
     result = {"items": [{"ticker": "X", "rank": 1, "direction": "bullish"}]}
     assert cr.grade_ranking(result, {})["graded"] == 0
+
+
+class TestResolveMarketCaps:
+    def test_finviz_preferred_yahoo_fills_rest(self, monkeypatch):
+        async def fake_yahoo(tickers):
+            return {t: 1.0e9 for t in tickers}   # Yahoo answers 1B for whatever it's asked
+        monkeypatch.setattr(cr, "_fetch_market_caps_safe", fake_yahoo)
+        # A has a Finviz cap; B's is None; C isn't in the pre-market result at all
+        premarket = {"A": {"market_cap": 5.0e9}, "B": {"market_cap": None}}
+        caps = asyncio.run(cr._resolve_market_caps(["A", "B", "C"], premarket))
+        assert caps["A"] == 5.0e9   # Finviz preferred
+        assert caps["B"] == 1.0e9   # Yahoo fallback (Finviz had None)
+        assert caps["C"] == 1.0e9   # Yahoo fallback (not in pre-market)
+
+    def test_all_yahoo_when_no_finviz(self, monkeypatch):
+        called = {}
+        async def fake_yahoo(tickers):
+            called["tickers"] = list(tickers)
+            return {t: 2.0e9 for t in tickers}
+        monkeypatch.setattr(cr, "_fetch_market_caps_safe", fake_yahoo)
+        caps = asyncio.run(cr._resolve_market_caps(["X", "Y"], {}))   # no Finviz data
+        assert caps == {"X": 2.0e9, "Y": 2.0e9}
+        assert called["tickers"] == ["X", "Y"]   # Yahoo asked for all of them
