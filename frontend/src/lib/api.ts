@@ -375,6 +375,41 @@ export async function fetchSqueezeTrackRecord(): Promise<SqueezeTrackRecord | nu
 }
 
 // ---------------------------------------------------------------------------
+// Validation — which signals actually predict the move (read-only)
+// ---------------------------------------------------------------------------
+
+export interface ValidationSignal {
+  signal: string;
+  n: number;
+  correlation: number | null;       // Spearman vs realized forward move
+  top_minus_bottom: number | null;  // top-third minus bottom-third mean outcome
+  verdict: string;                  // predictive | weak | no edge | insufficient data | no variance
+}
+
+export interface ValidationGroup {
+  n_runs: number;
+  outcome: string;
+  signals: ValidationSignal[];
+}
+
+export interface ValidationResult {
+  squeeze: ValidationGroup;
+  catalyst: ValidationGroup;
+  note: string;
+}
+
+/** Per-signal predictive value across graded runs (squeeze + catalyst). */
+export async function fetchValidation(): Promise<ValidationResult | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/validation`);
+    if (!res.ok) return null;
+    return (await res.json()) as ValidationResult;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Options flow — per-ticker put/call + implied vol (yfinance, read-only)
 // ---------------------------------------------------------------------------
 

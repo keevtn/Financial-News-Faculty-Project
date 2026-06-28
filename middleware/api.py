@@ -39,6 +39,7 @@ for _p in (_project_root, _backend_dir):
 from middleware.limiter import limiter
 from middleware.routes import (
     news, sentiment, agent, tickers, catalyst, screener, squeeze, gossip, alerts, options, trends,
+    validation,
 )
 
 log = logging.getLogger("middleware")
@@ -181,6 +182,7 @@ app.include_router(gossip.router, prefix="/api/gossip", tags=["gossip"])
 app.include_router(alerts.router, prefix="/api/alerts", tags=["alerts"])
 app.include_router(options.router, prefix="/api/options", tags=["options"])
 app.include_router(trends.router, prefix="/api/trends", tags=["trends"])
+app.include_router(validation.router, prefix="/api/validation", tags=["validation"])
 
 
 @app.get("/health", tags=["meta"])

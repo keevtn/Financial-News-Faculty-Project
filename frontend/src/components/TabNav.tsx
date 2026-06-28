@@ -1,5 +1,5 @@
 export type TabId =
-  | "structured" | "unstructured" | "catalysts" | "squeeze" | "gossip" | "alerts" | "screener";
+  | "structured" | "unstructured" | "catalysts" | "squeeze" | "gossip" | "alerts" | "screener" | "validation";
 
 interface TabNavProps {
   active: TabId;
@@ -15,6 +15,7 @@ const TABS: { id: TabId; label: string; sub: string }[] = [
   { id: "gossip",       label: "Gossip",       sub: "Accelerating social chatter" },
   { id: "alerts",       label: "Alerts",       sub: "Signal triggers" },
   { id: "screener",     label: "Screener",     sub: "Market Cap · Movers · Volume" },
+  { id: "validation",   label: "Validation",   sub: "Do the signals predict?" },
 ];
 
 export default function TabNav({ active, onChange, badges }: TabNavProps) {

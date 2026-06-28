@@ -14,6 +14,7 @@ import CatalystView from "@/components/CatalystView";
 import SqueezeView from "@/components/SqueezeView";
 import GossipView from "@/components/GossipView";
 import AlertsView from "@/components/AlertsView";
+import ValidationView from "@/components/ValidationView";
 import ScreenerView from "@/components/ScreenerView";
 import TickerTape from "@/components/TickerTape";
 import { ChartProvider } from "@/components/ChartProvider";
@@ -330,6 +331,8 @@ export default function HomePage() {
         <GossipView />
       ) : activeTab === "alerts" ? (
         <AlertsView />
+      ) : activeTab === "validation" ? (
+        <ValidationView />
       ) : (
         <ScreenerView />
       )}
