@@ -782,10 +782,16 @@ async def save_ranking(rankings_collection: Any, result: dict[str, Any]) -> None
     )
 
 
+# Heavy internal-only fields persisted for reproducibility but never read by any
+# client — projected out of read responses so the dashboard isn't downloading the
+# full LLM prompt + raw output + every doc hash on each Catalyst-tab load.
+_READ_EXCLUDE = {"_id": 0, "prompt": 0, "raw_llm": 0, "items.article_hashes": 0}
+
+
 async def get_latest_ranking(rankings_collection: Any) -> Optional[dict[str, Any]]:
-    """Return the most recent persisted ranking, or None."""
+    """Return the most recent persisted ranking (minus heavy internals), or None."""
     docs = await (
-        rankings_collection.find({}, {"_id": 0})
+        rankings_collection.find({}, _READ_EXCLUDE)
         .sort("generated_at", -1)
         .limit(1)
         .to_list(length=1)
