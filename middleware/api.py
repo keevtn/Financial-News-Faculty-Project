@@ -37,7 +37,7 @@ for _p in (_project_root, _backend_dir):
         sys.path.insert(0, _p)
 
 from middleware.limiter import limiter
-from middleware.routes import news, sentiment, agent, tickers, catalyst, screener, squeeze
+from middleware.routes import news, sentiment, agent, tickers, catalyst, screener, squeeze, gossip
 
 log = logging.getLogger("middleware")
 
@@ -175,6 +175,7 @@ app.include_router(tickers.router, prefix="/api/tickers", tags=["tickers"])
 app.include_router(catalyst.router, prefix="/api/catalyst", tags=["catalyst"])
 app.include_router(screener.router, prefix="/api/screener", tags=["screener"])
 app.include_router(squeeze.router, prefix="/api/squeeze", tags=["squeeze"])
+app.include_router(gossip.router, prefix="/api/gossip", tags=["gossip"])
 
 
 @app.get("/health", tags=["meta"])
