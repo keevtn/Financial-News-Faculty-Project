@@ -156,11 +156,13 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Allow the Next.js dev server to call this API
+# Allow the Next.js dev server (localhost OR 127.0.0.1, any port) + Vercel prod.
+# The exact-origin list missed 127.0.0.1 / non-3000 ports, which 400'd the
+# sentiment-batch CORS preflight in local dev; the regex covers both dev hosts.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origin_regex=r"https://.*\.vercel\.app|http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
