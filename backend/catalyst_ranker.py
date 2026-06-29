@@ -554,9 +554,15 @@ def _build_llm_prompt(candidates: list[CandidateFeatures]) -> str:
 
 async def _run_llm(
     candidates: list[CandidateFeatures],
+    *,
+    model: Optional[str] = None,
 ) -> tuple[Optional[dict[str, Any]], Optional[str], Optional[str], Optional[str]]:
     """
     Score the shortlist with one forced tool-use call.
+
+    ``model`` overrides the ``CATALYST_MODEL`` env default for this call (the
+    manual "Run now" button passes ``claude-opus-4-8`` so it is always full Opus
+    regardless of how the scheduler's model is configured).
 
     Returns (parsed_by_ticker, prompt, raw_json, status). On success status is
     None; on any fallback it is a short human-readable reason (surfaced on the
@@ -584,7 +590,7 @@ async def _run_llm(
     try:
         client = anthropic.AsyncAnthropic(api_key=api_key)
         resp = await client.messages.create(
-            model=MODEL,
+            model=model or MODEL,
             max_tokens=4096,
             system=_RUBRIC,
             tools=[_SUBMIT_TOOL],
@@ -677,9 +683,17 @@ async def rank_catalysts(
     baseline_days: int = 14,
     use_llm: bool = True,
     ticker_extractor: Any = None,
+    model: Optional[str] = None,
+    trigger: str = "api",
+    weights: Optional[dict[str, float]] = None,
 ) -> dict[str, Any]:
     """
     Run the full pipeline and return a ranking result dict (not yet persisted).
+
+    ``model`` forces a specific LLM for the deep read (else ``CATALYST_MODEL``);
+    ``trigger`` records how the run was initiated ("manual" | "scheduled" |
+    "api") for cooldown accounting; ``weights`` overrides the composite
+    pre-score weights (the auto-tuner passes the tuned vector, else defaults).
     """
     now = now or datetime.now(tz=timezone.utc)
     start, end = overnight_window(now)
@@ -702,7 +716,7 @@ async def rank_catalysts(
     premarket = await _fetch_premarket_safe(qualified_tickers)
     market_caps = await _resolve_market_caps(qualified_tickers, premarket)
     ranked = score_candidates(
-        candidates, min_sources=min_sources,
+        candidates, min_sources=min_sources, weights=weights,
         market_caps=market_caps, premarket=premarket,
     )
     shortlist = ranked[:top_k]
@@ -710,7 +724,7 @@ async def rank_catalysts(
     llm_by_ticker: Optional[dict[str, Any]] = None
     prompt = raw_llm = llm_status = None
     if use_llm and shortlist:
-        llm_by_ticker, prompt, raw_llm, llm_status = await _run_llm(shortlist)
+        llm_by_ticker, prompt, raw_llm, llm_status = await _run_llm(shortlist, model=model)
     elif not use_llm:
         llm_status = "use_llm=false (quantitative-only run requested)"
 
@@ -774,7 +788,8 @@ async def rank_catalysts(
         "generated_at": now,
         "window_start": start,
         "window_end": end,
-        "model": MODEL if used_llm else None,
+        "trigger": trigger,
+        "model": (model or MODEL) if used_llm else None,
         "used_llm": used_llm,
         "llm_status": llm_status,  # None on success; reason string on fallback
         "params": {
