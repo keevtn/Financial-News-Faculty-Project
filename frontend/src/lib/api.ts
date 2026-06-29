@@ -323,6 +323,98 @@ export async function fetchCatalystTrackRecord(): Promise<CatalystTrackRecord | 
   }
 }
 
+export type CatalystRunResult =
+  | { ok: true }
+  | { ok: false; rateLimited: true; retryAfterSeconds: number }
+  | { ok: false; rateLimited: false; error: string };
+
+/**
+ * Trigger a fresh full-Opus catalyst run via the **same-origin** Next.js proxy
+ * (`/api/catalyst/run`), which holds the secret API key server-side. The
+ * backend caps manual runs to once per hour and returns 429 on cooldown.
+ */
+export async function triggerCatalystRun(): Promise<CatalystRunResult> {
+  try {
+    const res = await fetch("/api/catalyst/run", { method: "POST" });
+    if (res.ok) return { ok: true };
+
+    if (res.status === 429) {
+      let secs = 3600;
+      try {
+        const data = await res.json();
+        secs = Number(
+          data?.detail?.retry_after_seconds ?? data?.retry_after_seconds ?? secs,
+        );
+      } catch {
+        const h = res.headers.get("Retry-After");
+        if (h) secs = Number(h);
+      }
+      return {
+        ok: false,
+        rateLimited: true,
+        retryAfterSeconds: Number.isFinite(secs) ? secs : 3600,
+      };
+    }
+
+    let msg = `Run failed (HTTP ${res.status}).`;
+    try {
+      const data = await res.json();
+      if (typeof data?.error === "string") msg = data.error;
+      else if (typeof data?.detail === "string") msg = data.detail;
+    } catch {
+      // non-JSON error body — keep the generic message
+    }
+    return { ok: false, rateLimited: false, error: msg };
+  } catch {
+    return { ok: false, rateLimited: false, error: "Network error triggering the run." };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Catalyst candidate universe — accumulated sub-threshold tickers (12h job)
+// ---------------------------------------------------------------------------
+
+export interface CatalystUniverseItem {
+  ticker: string;
+  n_docs: number;
+  n_stories: number;
+  n_sources: number;
+  sources: string[];
+  source_types: string[];
+  mean_sentiment: number;
+  direction: Direction;
+  cycles: number;
+  first_seen: string;
+  last_seen: string;
+  promoted: boolean;           // graduated past the standard volume floor
+  sample_articles: CatalystArticle[];
+}
+
+export interface CatalystUniverseResult {
+  items: CatalystUniverseItem[];
+  count: number;
+}
+
+/**
+ * The growing watchlist of emerging candidate tickers — names accumulating
+ * coverage over time that don't (yet) clear the standard ranker's floor.
+ * Public read; produced by the 12h universe job.
+ */
+export async function fetchCatalystUniverse(
+  limit = 50,
+  promotedOnly = false,
+): Promise<CatalystUniverseResult> {
+  try {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (promotedOnly) params.set("promoted_only", "true");
+    const res = await fetch(`${API_BASE}/api/catalyst/universe?${params}`);
+    if (!res.ok) return { items: [], count: 0 };
+    return (await res.json()) as CatalystUniverseResult;
+  } catch {
+    return { items: [], count: 0 };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Squeeze ranking — short fuel × social ignition (read-only; generated server-side)
 // ---------------------------------------------------------------------------

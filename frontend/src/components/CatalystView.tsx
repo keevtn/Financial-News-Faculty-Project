@@ -5,11 +5,14 @@ import {
   CatalystItem,
   CatalystRanking,
   CatalystTrackRecord,
+  CatalystUniverseItem,
   Direction,
   TickerQuote,
   fetchCatalystTrackRecord,
+  fetchCatalystUniverse,
   fetchLatestCatalystRanking,
   fetchTickerQuotes,
+  triggerCatalystRun,
 } from "@/lib/api";
 import { formatDistanceToNow } from "@/lib/time";
 import ChartIconButton from "./ChartIconButton";
@@ -339,22 +342,112 @@ function TrackRecordPanel({ tr }: { tr: CatalystTrackRecord }) {
   );
 }
 
+// ── Candidate universe ──────────────────────────────────────────────────────
+
+function UniversePanel({ items }: { items: CatalystUniverseItem[] }) {
+  if (items.length === 0) return null;
+  const promotedCount = items.filter((i) => i.promoted).length;
+
+  return (
+    <div className="max-w-3xl mx-auto mt-6 bg-[#0f1629] border border-[#1e2d4a] rounded-lg">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-[#1e2d4a]">
+        <div className="flex flex-col">
+          <span className="text-[10px] uppercase tracking-widest text-slate-400">
+            Emerging Candidates
+          </span>
+          <span className="text-[10px] text-slate-400">
+            Accumulating coverage over time — below the standard floor until promoted
+          </span>
+        </div>
+        <span className="text-[10px] text-slate-400">
+          {items.length} tracked · <span className="text-[#00d4aa]">{promotedCount} promoted</span>
+        </span>
+      </div>
+
+      <div className="hidden sm:flex items-center gap-3 px-4 py-1.5 text-[9px] uppercase tracking-widest text-slate-500 border-b border-[#1e2d4a]/60">
+        <span className="w-24">Ticker</span>
+        <span className="flex-1">Coverage</span>
+        <span className="w-16 text-right">Sentiment</span>
+        <span className="w-14 text-right">Seen</span>
+      </div>
+
+      <ul className="divide-y divide-[#1e2d4a]/60">
+        {items.map((it) => {
+          const dir = DIR[it.direction];
+          return (
+            <li key={it.ticker} className="flex items-center gap-3 px-4 py-2">
+              <span className="w-24 flex items-center gap-1.5 shrink-0">
+                <a
+                  href={`https://finance.yahoo.com/quote/${it.ticker}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-mono font-bold text-sm text-slate-100 hover:text-[#00d4aa] transition-colors"
+                >
+                  {it.ticker}
+                </a>
+                <ChartIconButton ticker={it.ticker} />
+              </span>
+              <span className="flex-1 text-[10px] text-slate-400 min-w-0">
+                <span className="font-mono text-slate-300">{it.n_stories}</span> stories ·{" "}
+                <span className="font-mono text-slate-300">{it.n_sources}</span> sources ·{" "}
+                <span className="font-mono text-slate-300">{it.cycles}</span> cycles
+                {it.promoted && (
+                  <span className="ml-2 inline-block px-1.5 py-0.5 rounded border border-[#00d4aa]/40 bg-[#00d4aa]/10 text-[#00d4aa] uppercase tracking-wider text-[9px] font-semibold">
+                    Promoted
+                  </span>
+                )}
+              </span>
+              <span className={`w-16 text-right text-[10px] font-semibold ${dir.text}`}>
+                {dir.icon} {it.mean_sentiment > 0 ? "+" : ""}
+                {it.mean_sentiment.toFixed(2)}
+              </span>
+              <span className="w-14 text-right text-[10px] text-slate-500 tabular-nums">
+                {formatDistanceToNow(it.last_seen)}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 // ── Main view ─────────────────────────────────────────────────────────────────
 
 export default function CatalystView() {
   const [ranking, setRanking] = useState<CatalystRanking | null>(null);
   const [trackRecord, setTrackRecord] = useState<CatalystTrackRecord | null>(null);
+  const [universe, setUniverse] = useState<CatalystUniverseItem[]>([]);
   const [quotes, setQuotes] = useState<Record<string, TickerQuote>>({});
   const [loading, setLoading] = useState(true);
+  const [running, setRunning] = useState(false);
+  const [runMsg, setRunMsg] = useState<string | null>(null);
+
+  async function handleRun() {
+    setRunning(true);
+    setRunMsg(null);
+    const result = await triggerCatalystRun();
+    if (result.ok) {
+      await load(); // re-read the freshly generated ranking
+    } else if (result.rateLimited) {
+      const mins = Math.max(1, Math.ceil(result.retryAfterSeconds / 60));
+      setRunMsg(`On cooldown — try again in ~${mins} min.`);
+    } else {
+      setRunMsg(result.error);
+    }
+    setRunning(false);
+  }
 
   async function load() {
     setLoading(true);
-    const [r, tr] = await Promise.all([
+    const [r, tr, uni] = await Promise.all([
       fetchLatestCatalystRanking(),
       fetchCatalystTrackRecord(),
+      fetchCatalystUniverse(40),
     ]);
     setRanking(r);
     setTrackRecord(tr);
+    setUniverse(uni.items);
     setLoading(false);
     // Live quotes for the ranked tickers (best-effort; cards render without them).
     if (r?.items?.length) {
@@ -403,13 +496,29 @@ export default function CatalystView() {
           </div>
         )}
 
-        <button
-          onClick={load}
-          disabled={loading}
-          className="ml-auto text-[10px] uppercase tracking-wider px-2.5 py-1 rounded border border-[#1e2d4a] text-slate-400 hover:text-[#00d4aa] hover:border-[#2d4470] transition-colors disabled:opacity-50"
-        >
-          {loading ? "Loading…" : "↻ Refresh"}
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          {runMsg && (
+            <span className="text-[10px] text-amber-400" role="status">
+              {runMsg}
+            </span>
+          )}
+          <button
+            onClick={handleRun}
+            disabled={running || loading}
+            aria-busy={running}
+            title="Generate a fresh AI ranking now (full Opus; limited to once per hour)"
+            className="text-[10px] uppercase tracking-wider px-2.5 py-1 rounded border border-[#00d4aa]/40 bg-[#00d4aa]/10 text-[#00d4aa] hover:bg-[#00d4aa]/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#00d4aa] transition-colors disabled:opacity-50"
+          >
+            {running ? "Running Opus…" : "⚡ Run now (AI)"}
+          </button>
+          <button
+            onClick={load}
+            disabled={loading || running}
+            className="text-[10px] uppercase tracking-wider px-2.5 py-1 rounded border border-[#1e2d4a] text-slate-400 hover:text-[#00d4aa] hover:border-[#2d4470] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#00d4aa] transition-colors disabled:opacity-50"
+          >
+            {loading ? "Loading…" : "↻ Refresh"}
+          </button>
+        </div>
       </div>
 
       {/* body */}
@@ -421,9 +530,9 @@ export default function CatalystView() {
           <div className="max-w-lg mx-auto text-center py-16">
             <p className="text-sm text-slate-300 font-semibold">No ranking generated yet</p>
             <p className="text-xs text-slate-400 mt-2 leading-relaxed">
-              Catalyst rankings are produced on demand by the backend. Trigger one with a
-              <span className="font-mono text-slate-400"> POST /api/catalyst/run</span> (key-protected),
-              ideally before the market opens, then refresh this view.
+              Catalyst rankings are produced on demand. Use{" "}
+              <span className="text-[#00d4aa] font-semibold">⚡ Run now (AI)</span> above to
+              generate one with full Opus (limited to once per hour), ideally before the market opens.
             </p>
           </div>
         ) : ranking.items.length === 0 ? (
@@ -437,6 +546,8 @@ export default function CatalystView() {
             ))}
           </div>
         )}
+
+        <UniversePanel items={universe} />
       </div>
     </div>
   );
