@@ -77,9 +77,23 @@ def _should_run(now: datetime, latest_generated_at: Any, run_hour_et: int) -> bo
     return True
 
 
+async def _load_tuned_weights(meta: Any) -> Any:
+    """Auto-tuned pre-score weights from catalyst_meta, or None (→ defaults)."""
+    if meta is None:
+        return None
+    try:
+        doc = await meta.find_one({"_id": "weights"}, {"_id": 0, "weights": 1})
+    except Exception:  # noqa: BLE001
+        return None
+    if doc and isinstance(doc.get("weights"), dict):
+        return {k: float(v) for k, v in doc["weights"].items()}
+    return None
+
+
 async def _tick(app: Any) -> None:
     news = getattr(app.state, "news_collection", None)
     coll = getattr(app.state, "rankings_collection", None)
+    meta = getattr(app.state, "catalyst_meta_collection", None)
     if news is None or coll is None:
         return
 
@@ -99,7 +113,10 @@ async def _tick(app: Any) -> None:
         if _should_run(now, latest_gen, _env_int("CATALYST_RUN_HOUR_ET", 8)):
             use_llm = _env_flag("CATALYST_SCHED_LLM", True)
             log.info("catalyst scheduler: generating pre-market ranking (llm=%s)", use_llm)
-            result = await rank_catalysts(news, use_llm=use_llm)
+            result = await rank_catalysts(
+                news, use_llm=use_llm, trigger="scheduled",
+                weights=await _load_tuned_weights(meta),
+            )
             await save_ranking(coll, result)
             log.info("catalyst scheduler: ranking saved (run_id=%s used_llm=%s)",
                      result.get("run_id"), result.get("used_llm"))

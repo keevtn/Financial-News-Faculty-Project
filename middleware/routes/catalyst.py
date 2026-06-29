@@ -40,6 +40,12 @@ router = APIRouter()
 
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
+# Human-triggered ("manual") runs spend full-Opus credits, so they are capped to
+# once per hour globally (cost guard) and forced to Opus regardless of the
+# scheduler's CATALYST_MODEL. Both are overridable via env for testing/tuning.
+MANUAL_RUN_COOLDOWN_SECONDS = int(os.environ.get("CATALYST_MANUAL_COOLDOWN", "3600"))
+MANUAL_RUN_MODEL = os.environ.get("CATALYST_MANUAL_MODEL", "claude-opus-4-8")
+
 
 def _require_key(key: str | None = Security(_api_key_header)) -> None:
     """Reject requests without a valid X-API-Key (reuses AGENT_API_KEY)."""
@@ -55,6 +61,59 @@ def _rankings_collection(request: Request) -> Any:
     if coll is None:
         raise HTTPException(status_code=503, detail="Rankings store unavailable")
     return coll
+
+
+def _universe_collection(request: Request) -> Any:
+    coll = getattr(request.app.state, "universe_collection", None)
+    if coll is None:
+        raise HTTPException(status_code=503, detail="Candidate universe store unavailable")
+    return coll
+
+
+async def _manual_cooldown_remaining(coll: Any) -> int:
+    """
+    Seconds left before another **manual** run is allowed (0 = allowed now).
+
+    Fail closed: if the last-manual-run timestamp can't be read (e.g. MongoDB
+    down) we cannot enforce the cost cap, so we block by raising 503 rather than
+    silently letting the run through.
+    """
+    try:
+        docs = await (
+            coll.find({"trigger": "manual"}, {"_id": 0, "generated_at": 1})
+            .sort("generated_at", -1).limit(1).to_list(length=1)
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503,
+            detail="Manual-run cooldown can't be verified (store unavailable) — try later.",
+        ) from exc
+    if not docs:
+        return 0
+    last = docs[0].get("generated_at")
+    if not isinstance(last, datetime):
+        return 0
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    elapsed = (datetime.now(tz=timezone.utc) - last).total_seconds()
+    return max(0, int(MANUAL_RUN_COOLDOWN_SECONDS - elapsed))
+
+
+async def _load_tuned_weights(request: Request) -> Optional[dict[str, float]]:
+    """
+    Auto-tuned pre-score weights from catalyst_meta, or None (→ ranker defaults).
+    Never raises — a missing store or doc just means "use defaults".
+    """
+    meta = getattr(request.app.state, "catalyst_meta_collection", None)
+    if meta is None:
+        return None
+    try:
+        doc = await meta.find_one({"_id": "weights"}, {"_id": 0, "weights": 1})
+    except Exception:  # noqa: BLE001
+        return None
+    if doc and isinstance(doc.get("weights"), dict):
+        return {k: float(v) for k, v in doc["weights"].items()}
+    return None
 
 
 @router.get("/latest")
@@ -174,18 +233,41 @@ async def track_record(
 
 
 @router.post("/run", dependencies=[Depends(_require_key)])
-@limiter.limit("6/hour")
+@limiter.limit("10/hour")
 async def run(
     request: Request,
     top_k: int = Query(default=10, ge=1, le=25),
     min_sources: int = Query(default=2, ge=1, le=10),
     baseline_days: int = Query(default=14, ge=1, le=90),
     use_llm: bool = Query(default=True),
+    trigger: str = Query(default="manual", pattern="^(manual|scheduled|api)$"),
 ) -> dict[str, Any]:
-    """Generate, persist, and return a new catalyst ranking."""
+    """
+    Generate, persist, and return a new catalyst ranking.
+
+    Human-triggered (``trigger=manual``, the frontend "Run now" button via the
+    Next.js proxy) runs are capped to once per hour globally (cost guard) and
+    forced to full Opus regardless of ``CATALYST_MODEL``. The slowapi limit is a
+    loose anti-spam backstop; the real cap is the persisted-timestamp cooldown.
+    """
     news = getattr(request.app.state, "news_collection", None)
     if news is None:
         raise HTTPException(status_code=503, detail="News store unavailable")
+    coll = _rankings_collection(request)
+
+    model: str | None = None
+    if trigger == "manual":
+        remaining = await _manual_cooldown_remaining(coll)
+        if remaining > 0:
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "detail": "Manual catalyst run is on cooldown.",
+                    "retry_after_seconds": remaining,
+                },
+                headers={"Retry-After": str(remaining)},
+            )
+        model = MANUAL_RUN_MODEL  # force full Opus for the button
 
     result = await rank_catalysts(
         news,
@@ -193,9 +275,33 @@ async def run(
         min_sources=min_sources,
         baseline_days=baseline_days,
         use_llm=use_llm,
+        model=model,
+        trigger=trigger,
+        weights=await _load_tuned_weights(request),
     )
-    await save_ranking(_rankings_collection(request), result)
+    await save_ranking(coll, result)
     return {"ranking": result}
+
+
+@router.get("/universe")
+@limiter.limit("60/minute")
+async def universe(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=200),
+    promoted_only: bool = Query(default=False),
+) -> dict[str, Any]:
+    """
+    Accumulated sub-threshold candidate tickers from the 12h universe job —
+    names that don't (yet) clear the standard model's volume floor but are
+    building evidence over time. Public read. Sorted most-recently-seen first.
+    """
+    coll = _universe_collection(request)
+    query: dict[str, Any] = {"promoted": True} if promoted_only else {}
+    docs = await (
+        coll.find(query, {"_id": 0})
+        .sort("last_seen", -1).limit(limit).to_list(length=limit)
+    )
+    return {"items": docs, "count": len(docs)}
 
 
 @router.post("/grade/{run_id}", dependencies=[Depends(_require_key)])

@@ -87,6 +87,8 @@ async def lifespan(app: FastAPI):
             app.state.news_collection = client["financial_news"]["news_items"]
             app.state.rankings_collection = client["financial_news"]["catalyst_rankings"]
             app.state.squeeze_collection = client["financial_news"]["squeeze_rankings"]
+            app.state.universe_collection = client["financial_news"]["catalyst_universe"]
+            app.state.catalyst_meta_collection = client["financial_news"]["catalyst_meta"]
             log.info("MongoDB connected")
         except Exception as exc:
             log.error("Failed to connect to MongoDB: %s", exc)
@@ -94,12 +96,16 @@ async def lifespan(app: FastAPI):
             app.state.news_collection = None
             app.state.rankings_collection = None
             app.state.squeeze_collection = None
+            app.state.universe_collection = None
+            app.state.catalyst_meta_collection = None
     else:
         log.warning("MONGODB_URI not set — /api/news will return empty results")
         app.state.mongo_client = None
         app.state.news_collection = None
         app.state.rankings_collection = None
         app.state.squeeze_collection = None
+        app.state.universe_collection = None
+        app.state.catalyst_meta_collection = None
 
     # In-process ingestion (only when RUN_INGESTION=true — see ingestion_runner).
     # Keeps the feeds fresh on the hosted deployment without a separate worker.
@@ -125,6 +131,15 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         log.error("Failed to start squeeze scheduler: %s", exc)
 
+    # Catalyst universe scheduler (only when RUN_CATALYST_UNIVERSE_SCHEDULER=true).
+    # Slow cadence (default 12h): accumulates sub-threshold candidate tickers and
+    # optionally auto-tunes the pre-score weights. No LLM cost.
+    try:
+        from middleware.catalyst_universe_scheduler import start_catalyst_universe_scheduler
+        await start_catalyst_universe_scheduler(app)
+    except Exception as exc:
+        log.error("Failed to start catalyst universe scheduler: %s", exc)
+
     yield
 
     try:
@@ -144,6 +159,12 @@ async def lifespan(app: FastAPI):
         await stop_squeeze_scheduler(app)
     except Exception as exc:
         log.error("Failed to stop squeeze scheduler: %s", exc)
+
+    try:
+        from middleware.catalyst_universe_scheduler import stop_catalyst_universe_scheduler
+        await stop_catalyst_universe_scheduler(app)
+    except Exception as exc:
+        log.error("Failed to stop catalyst universe scheduler: %s", exc)
 
     if getattr(app.state, "mongo_client", None):
         app.state.mongo_client.close()
