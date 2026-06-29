@@ -6,6 +6,7 @@
 #   .\start.ps1 -RssOnly     # structured RSS only
 #   .\start.ps1 -NoIngest    # skip ingestion (middleware + frontend only)
 #   .\start.ps1 -NoBackfill  # skip the social-sentiment backfill self-heal step
+#   .\start.ps1 -CatalystUniverse  # also run the 12h candidate-universe scheduler (no LLM cost)
 #
 # Notes:
 #   * The middleware runs WITHOUT uvicorn --reload on purpose. Under OneDrive the
@@ -20,7 +21,8 @@ param(
     [switch]$RssOnly,
     [switch]$NoIngest,
     [switch]$Social,
-    [switch]$NoBackfill
+    [switch]$NoBackfill,
+    [switch]$CatalystUniverse
 )
 
 $root = $PSScriptRoot
@@ -55,8 +57,12 @@ if (-not $cleared -and $stillUsed) {
 }
 
 # --- 1. Middleware (FastAPI) - single process, venv Python, no --reload ---
+# -CatalystUniverse turns on the 12h candidate-universe scheduler by exporting its
+# env flag inside the child window (the backtick keeps $env literal until then).
+$universeEnv = if ($CatalystUniverse) { "`$env:RUN_CATALYST_UNIVERSE_SCHEDULER = 'true'" } else { "" }
 Start-Process powershell -ArgumentList "-NoExit", "-Command", @"
     Set-Location '$root'
+    $universeEnv
     Write-Host '=== Middleware ===' -ForegroundColor Cyan
     & '$venvPy' -m uvicorn middleware.api:app --port 8000
 "@
@@ -109,6 +115,9 @@ Write-Host ""
 Write-Host "All services starting in separate windows." -ForegroundColor White
 Write-Host "  Middleware -> http://localhost:8000/docs" -ForegroundColor Cyan
 Write-Host "  Frontend  -> http://localhost:3000" -ForegroundColor Green
+if ($CatalystUniverse) {
+    Write-Host "  Catalyst universe scheduler -> ON (12h cadence, no LLM cost)" -ForegroundColor Cyan
+}
 if (-not $NoIngest) {
     if ($RssOnly) {
         Write-Host "  Ingestion -> [RSS only]$(if ($Social) { ' + Social' } else { '' })  (SEC+FDA skipped via -RssOnly)" -ForegroundColor Yellow
