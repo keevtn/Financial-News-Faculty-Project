@@ -22,6 +22,11 @@ from typing import Optional
 _DOLLAR_PATTERN   = re.compile(r'\$([A-Z]{1,5})\b')
 _PAREN_PATTERN    = re.compile(r'\(([A-Z]{1,5})\)')
 _EXCHANGE_PATTERN = re.compile(r'(?:NYSE|NASDAQ|AMEX):\s*([A-Z]{1,5})\b')
+# EDGAR filing titles embed the filer's CIK zero-padded to 10 digits, e.g.
+# "8-K - GENCO SHIPPING & TRADING LTD (0001326200) (Filer)". A 10-digit number in
+# parens is a near-unambiguous EDGAR signature — years like "(2024)" or other
+# parenthesised numbers won't match — so resolving it via a CIK map is safe.
+_CIK_PATTERN      = re.compile(r'\((\d{10})\)')
 
 # Words that look like tickers but are not — filtered out after extraction.
 _FALSE_POSITIVES: frozenset[str] = frozenset({
@@ -363,12 +368,22 @@ class TickerExtractor:
     extra_mappings:
         Optional additional {company_name: ticker} pairs to merge with the
         built-in dictionary.
+    cik_map:
+        Optional {cik:int -> ticker} from SEC's company_tickers.json. When given,
+        a third pass resolves the 10-digit CIK embedded in EDGAR filing titles to
+        a ticker — the path that lets the regulatory lane turn filings (which
+        carry a CIK, not a symbol) into ranked candidates.
     """
 
-    def __init__(self, extra_mappings: Optional[dict[str, str]] = None) -> None:
+    def __init__(
+        self,
+        extra_mappings: Optional[dict[str, str]] = None,
+        cik_map: Optional[dict[int, str]] = None,
+    ) -> None:
         self._mappings: dict[str, str] = dict(_COMPANY_TICKERS)
         if extra_mappings:
             self._mappings.update({k.lower(): v for k, v in extra_mappings.items()})
+        self._cik_map: dict[int, str] = cik_map or {}
 
     def extract(self, title: str, description: str) -> tuple[str, ...]:
         """Return a sorted tuple of unique ticker symbols found in the text."""
@@ -385,6 +400,13 @@ class TickerExtractor:
         for name, ticker in self._mappings.items():
             if re.search(r'\b' + re.escape(name) + r'\b', text_lower):
                 found.add(ticker)
+
+        # Pass 3 — EDGAR CIK lookup (resolves filings to their ticker)
+        if self._cik_map:
+            for m in _CIK_PATTERN.finditer(text):
+                ticker = self._cik_map.get(int(m.group(1)))
+                if ticker:
+                    found.add(ticker)
 
         found -= _FALSE_POSITIVES
         return tuple(sorted(found))

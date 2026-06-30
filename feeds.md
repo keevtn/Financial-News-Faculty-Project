@@ -61,6 +61,11 @@ Two SEC **RSS** feeds are also polled by `RSSExtractor` and routed to the `sec`
 lane: **SEC Press Releases** (`/news/pressreleases.rss`) and **SEC
 Administrative Proceedings** (`/rss/litigation/admin.xml`, enforcement).
 
+Filings carry a CIK, not a ticker, so `backend/edgar_tickers.py` loads SEC's
+`company_tickers.json` (CIK→ticker) and the catalyst ranker resolves the 10-digit
+CIK in each filing title to a symbol — without it the regulatory lane can't rank
+filings.
+
 ### FDA
 
 Press releases + MedWatch via RSS; recalls via the openFDA REST API. All

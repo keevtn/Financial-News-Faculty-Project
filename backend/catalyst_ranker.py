@@ -738,7 +738,11 @@ async def rank_catalysts(
     if ticker_extractor is None:
         try:
             from ticker_extractor import TickerExtractor
-            ticker_extractor = TickerExtractor()
+            from edgar_tickers import load_cik_map
+            # CIK map resolves EDGAR filings (which carry a CIK, not a ticker) to
+            # symbols — essential for the regulatory lane. Cached + never raises;
+            # {} on failure just falls back to text-only extraction.
+            ticker_extractor = TickerExtractor(cik_map=await load_cik_map())
         except Exception:  # noqa: BLE001
             ticker_extractor = None
 
