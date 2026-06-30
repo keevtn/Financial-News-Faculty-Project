@@ -22,6 +22,10 @@ Polled by `backend/IngestionModule.py` → `RSSExtractor`, `SECExtractor`, `FDAE
 | Seeking Alpha Market News | https://seekingalpha.com/market_currents.xml | Equities, Analysis |
 | Federal Reserve Press Releases | https://www.federalreserve.gov/feeds/press_all.xml | Macro, Bonds |
 | BLS Economic News | https://www.bls.gov/feed/bls_latest.rss | Macro |
+| Bureau of Economic Analysis | https://apps.bea.gov/rss/rss.xml | Macro (GDP, PCE, trade) |
+| EIA Today in Energy | https://www.eia.gov/rss/todayinenergy.xml | Energy (supply/demand) |
+| CFTC Press Releases | https://www.cftc.gov/RSS/RSSGP/rssgp.xml | Derivatives enforcement |
+| FTC Press Releases | https://www.ftc.gov/feeds/press-release.xml | Antitrust, merger challenges |
 | CoinDesk | https://www.coindesk.com/arc/outboundfeeds/rss/ | Crypto |
 | Cointelegraph | https://cointelegraph.com/rss | Crypto |
 | Yahoo Finance | https://finance.yahoo.com/rss/topfinstories | Equities |
@@ -37,25 +41,39 @@ Polled by `backend/IngestionModule.py` → `RSSExtractor`, `SECExtractor`, `FDAE
 
 ### SEC EDGAR
 
-Polled via the EDGAR full-text search API. No RSS feed; custom JSON extractor.
+Polled via the EDGAR `getcurrent` Atom feed per filing type (`SECExtractor`). The
+type is URL-encoded, so multi-word forms like `SC 13D/A` work. Requires a contact
+email in the User-Agent (`SEC_CONTACT_EMAIL`) per SEC fair-access policy.
 
 | Filing Type | Description |
 |---|---|
 | 8-K | Current reports (material events, earnings releases) |
-| 10-K | Annual reports |
-| 10-Q | Quarterly reports |
+| 10-K / 10-Q | Annual / quarterly reports |
 | S-1 | IPO registration statements |
 | 6-K | Foreign private issuer reports |
+| 425 / S-4 | M&A communications / registration |
+| SC 13D / SC 13D/A | Activist >5% stake (and amendments) |
+| SC TO-T / SC 14D9 | Tender offer / target response |
+| DEFM14A | Merger-vote proxy statement |
+| 424B4 | Priced offering prospectus (dilution) |
+
+Two SEC **RSS** feeds are also polled by `RSSExtractor` and routed to the `sec`
+lane: **SEC Press Releases** (`/news/pressreleases.rss`) and **SEC
+Administrative Proceedings** (`/rss/litigation/admin.xml`, enforcement).
 
 ### FDA
 
-Polled via the openFDA REST API. No RSS feed; custom JSON extractor.
+Press releases + MedWatch via RSS; recalls via the openFDA REST API. All
+normalized by `FDAExtractor` (source_type `fda`).
 
-| Endpoint | Description |
+| Source | Description |
 |---|---|
-| Press releases | FDA news and announcements |
-| Enforcement reports | Recalls and enforcement actions |
-| Drug adverse events | Serious adverse event reports (FAERS) |
+| Press releases (RSS) | FDA news, approvals, safety communications |
+| MedWatch (RSS) | Safety alerts / labeling changes |
+| Drug enforcement | openFDA `/drug/enforcement.json` — drug recalls |
+| Device enforcement | openFDA `/device/enforcement.json` — device recalls |
+| Food enforcement | openFDA `/food/enforcement.json` — food recalls |
+| Drug adverse events | openFDA `/drug/event.json` (FAERS); off by default (high volume) |
 
 ---
 

@@ -62,6 +62,7 @@ import logging
 import os
 import re
 import time
+import urllib.parse
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Coroutine, Optional
@@ -372,7 +373,7 @@ DEFAULT_RSS_FEEDS: list[dict[str, str]] = [
         "label": "Seeking Alpha Market News",
         "url": "https://seekingalpha.com/market_currents.xml",
     },
-    # ── Macro / economic data ────────────────────────────────────────────────
+    # ── Macro / economic data (primary government sources) ───────────────────
     {
         "label": "Federal Reserve Press Releases",
         "url": "https://www.federalreserve.gov/feeds/press_all.xml",
@@ -380,6 +381,23 @@ DEFAULT_RSS_FEEDS: list[dict[str, str]] = [
     {
         "label": "BLS Economic News",
         "url": "https://www.bls.gov/feed/bls_latest.rss",
+    },
+    {
+        "label": "Bureau of Economic Analysis",  # GDP, PCE, trade balance (source data)
+        "url": "https://apps.bea.gov/rss/rss.xml",
+    },
+    {
+        "label": "EIA Today in Energy",  # oil/gas/power supply-demand (source data)
+        "url": "https://www.eia.gov/rss/todayinenergy.xml",
+    },
+    # ── Regulators (primary enforcement / antitrust sources) ─────────────────
+    {
+        "label": "CFTC Press Releases",  # derivatives/commodity enforcement
+        "url": "https://www.cftc.gov/RSS/RSSGP/rssgp.xml",
+    },
+    {
+        "label": "FTC Press Releases",  # antitrust / merger challenges
+        "url": "https://www.ftc.gov/feeds/press-release.xml",
     },
     # ── Crypto / digital assets ──────────────────────────────────────────────
     {
@@ -420,6 +438,18 @@ DEFAULT_RSS_FEEDS: list[dict[str, str]] = [
     # challenge that returns HTTP 403 "Just a moment..." to any server-side
     # fetch, so it cannot be ingested via a plain RSS poll. Re-add here if a
     # licensed/API feed URL becomes available.
+    # ── SEC regulatory news (RSS) — routed to the "sec" lane so it joins EDGAR
+    # filings in the regulatory catalyst profile and skips the keyword filter.
+    {
+        "label": "SEC Press Releases",
+        "url": "https://www.sec.gov/news/pressreleases.rss",
+        "source_type": "sec",
+    },
+    {
+        "label": "SEC Administrative Proceedings",  # enforcement actions
+        "url": "https://www.sec.gov/rss/litigation/admin.xml",
+        "source_type": "sec",
+    },
     # ── Reddit social feeds (unauthenticated public RSS, /new for recency) ──
     # source_type="social" routes these to the Unstructured tab in the frontend.
     {
@@ -660,8 +690,15 @@ class RSSExtractor:
 #: EDGAR latest-filings RSS (covers all filing types)
 _EDGAR_RSS_URL = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type={filing_type}&dateb=&owner=include&count=40&search_text=&output=atom"
 
-#: Filing types of primary interest to financial-news dashboards
-DEFAULT_SEC_FILING_TYPES: list[str] = ["8-K", "10-K", "10-Q", "S-1", "6-K"]
+#: Filing types of primary interest to financial-news dashboards.
+#: Periodic/registration (8-K…6-K) plus the M&A / activist / offering forms that
+#: are themselves hard catalysts: 425 & S-4 (merger comms/registration), SC 13D
+#: (>5% activist stake) + /A amendments, SC TO-T / SC 14D9 (tender offer & target
+#: response), DEFM14A (merger vote proxy), 424B4 (priced offering — dilution).
+DEFAULT_SEC_FILING_TYPES: list[str] = [
+    "8-K", "10-K", "10-Q", "S-1", "6-K",
+    "425", "S-4", "SC 13D", "SC 13D/A", "SC TO-T", "SC 14D9", "DEFM14A", "424B4",
+]
 
 
 class SECExtractor:
@@ -689,7 +726,8 @@ class SECExtractor:
     async def _poll_filing_type(
         self, filing_type: str, http: _HttpClient
     ) -> list[NewsItem]:
-        url = _EDGAR_RSS_URL.format(filing_type=filing_type)
+        # Forms like "SC 13D/A" carry spaces & slashes — encode for the query string.
+        url = _EDGAR_RSS_URL.format(filing_type=urllib.parse.quote(filing_type, safe=""))
         items: list[NewsItem] = []
         try:
             raw_xml = await http.get_text(url)
@@ -765,10 +803,14 @@ class SECExtractor:
 # ---------------------------------------------------------------------------
 
 _FDA_NEWS_RSS = "https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/press-releases/rss.xml"
-_FDA_DRUG_ENFORCEMENT_URL = (
-    "https://api.fda.gov/drug/enforcement.json"
-    "?sort=report_date:desc&limit=20"
-)
+_FDA_MEDWATCH_RSS = "https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/medwatch/rss.xml"
+#: openFDA recall/enforcement endpoints — same schema across product centers, so
+#: one parser handles all three. Drug + device + food = the bulk of recall news.
+_FDA_ENFORCEMENT_URLS: dict[str, str] = {
+    "Drug": "https://api.fda.gov/drug/enforcement.json?sort=report_date:desc&limit=20",
+    "Device": "https://api.fda.gov/device/enforcement.json?sort=report_date:desc&limit=20",
+    "Food": "https://api.fda.gov/food/enforcement.json?sort=report_date:desc&limit=20",
+}
 _FDA_DRUG_EVENT_URL = (
     "https://api.fda.gov/drug/event.json"
     "?sort=receivedate:desc&limit=10"
@@ -777,14 +819,17 @@ _FDA_DRUG_EVENT_URL = (
 
 class FDAExtractor:
     """
-    Collects FDA news from two complementary sources:
+    Collects FDA news from several complementary primary sources:
 
     1. **FDA Press-Release RSS** — official announcements, drug approvals,
        safety communications.
-    2. **openFDA Drug Enforcement** — recent drug recalls / enforcement
-       actions (REST JSON, ``/drug/enforcement.json``).
+    2. **FDA MedWatch RSS** — safety alerts / labeling changes (catalysts that
+       don't always get a press release).
+    3. **openFDA Enforcement** — recent recalls across the drug, device, and
+       food centers (REST JSON, ``/{center}/enforcement.json``; shared schema).
+    4. **openFDA Drug Adverse Events** — optional, high-volume (off by default).
 
-    Both are normalised into ``NewsItem`` objects (source_type="fda").
+    All are normalised into ``NewsItem`` objects (source_type="fda").
     """
 
     def __init__(
@@ -800,17 +845,19 @@ class FDAExtractor:
         self.include_drug_events = include_drug_events
         self._running = False
 
-    # ── RSS press releases ────────────────────────────────────────────── #
+    # ── RSS feeds (press releases + MedWatch safety alerts) ───────────── #
 
-    async def _poll_press_releases(self, http: _HttpClient) -> list[NewsItem]:
+    async def _poll_rss(self, http: _HttpClient, url: str, source: str) -> list[NewsItem]:
         items: list[NewsItem] = []
         try:
-            raw_xml = await http.get_text(_FDA_NEWS_RSS)
+            raw_xml = await http.get_text(url)
             parsed = feedparser.parse(raw_xml)
             for entry in parsed.entries:
-                title = getattr(entry, "title", "").strip() or "FDA Press Release"
+                title = getattr(entry, "title", "").strip() or source
                 link = getattr(entry, "link", "")
-                pub_raw = getattr(entry, "published_parsed", None)
+                pub_raw = getattr(entry, "published_parsed", None) or getattr(
+                    entry, "updated_parsed", None
+                )
                 published_at = _parse_dt(pub_raw)
                 description = (
                     getattr(entry, "summary", "")
@@ -818,7 +865,7 @@ class FDAExtractor:
                 ).strip()
 
                 item = NewsItem(
-                    source="FDA Press Releases",
+                    source=source,
                     source_type="fda",
                     title=title,
                     published_at=published_at,
@@ -828,15 +875,17 @@ class FDAExtractor:
                 if self._seen.is_new(item):
                     items.append(item)
         except Exception as exc:  # noqa: BLE001
-            log.warning("FDA RSS poll failed: %s", exc)
+            log.warning("FDA RSS poll failed [%s]: %s", source, exc)
         return items
 
-    # ── openFDA drug enforcement (REST JSON) ─────────────────────────── #
+    # ── openFDA enforcement (REST JSON; drug / device / food share a schema) ─ #
 
-    async def _poll_enforcement(self, http: _HttpClient) -> list[NewsItem]:
+    async def _poll_enforcement(
+        self, http: _HttpClient, center: str, url: str
+    ) -> list[NewsItem]:
         items: list[NewsItem] = []
         try:
-            data = await http.get_json(_FDA_DRUG_ENFORCEMENT_URL)
+            data = await http.get_json(url)
             for result in data.get("results", []):
                 product = result.get("product_description", "Unknown product")
                 firm = result.get("recalling_firm", "Unknown firm")
@@ -857,7 +906,7 @@ class FDAExtractor:
                 published_at = _parse_dt(report_date_raw)
 
                 item = NewsItem(
-                    source="FDA Drug Enforcement",
+                    source=f"FDA {center} Enforcement",
                     source_type="fda",
                     title=title,
                     published_at=published_at,
@@ -868,12 +917,13 @@ class FDAExtractor:
                         "classification": recall_class,
                         "status": status,
                         "recalling_firm": firm,
+                        "center": center.lower(),
                     },
                 )
                 if self._seen.is_new(item):
                     items.append(item)
         except Exception as exc:  # noqa: BLE001
-            log.warning("FDA Enforcement poll failed: %s", exc)
+            log.warning("FDA Enforcement poll failed [%s]: %s", center, exc)
         return items
 
     # ── openFDA adverse drug events (optional, high volume) ──────────── #
@@ -933,8 +983,12 @@ class FDAExtractor:
             while self._running:
                 start = asyncio.get_running_loop().time()
                 batches = await asyncio.gather(
-                    self._poll_press_releases(http),
-                    self._poll_enforcement(http),
+                    self._poll_rss(http, _FDA_NEWS_RSS, "FDA Press Releases"),
+                    self._poll_rss(http, _FDA_MEDWATCH_RSS, "FDA MedWatch Safety Alerts"),
+                    *(
+                        self._poll_enforcement(http, center, url)
+                        for center, url in _FDA_ENFORCEMENT_URLS.items()
+                    ),
                     *(
                         [self._poll_drug_events(http)]
                         if self.include_drug_events
