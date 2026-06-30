@@ -47,15 +47,17 @@ _LOW_FLOAT_REF = 50e6      # float at/below which the low-float term maxes out
 _FOCUS_SAT = 12.0          # spam-robust mention volume at which ignition maxes
 _ENGAGEMENT_SAT = 100.0    # likes+replies at which the engagement term maxes
 _VELOCITY_SAT = 5.0        # 5x trailing baseline (gossip) -> max acceleration term
+_BREADTH_SAT = 8.0         # distinct authors at which the propagation term maxes
 
-# Ignition weights (sum to 1 with velocity present). The `velocity` term is the
-# rolling-window mention acceleration from gossip; when it's unavailable the
-# other three are renormalized, so ignition degrades gracefully to the snapshot.
 _FUEL_W = {"short_float": 0.45, "days_to_cover": 0.35, "low_float": 0.20}
-# `velocity` = social mention acceleration (gossip); `search` = Google-Trends
-# search-interest acceleration. Both optional — weights renormalize over the
-# terms actually present, so missing signals degrade gracefully.
-_IGNITION_W = {"volume": 0.40, "bullish": 0.25, "engagement": 0.15,
+# Ignition components, all optional — weights renormalize over the terms actually
+# present, so missing signals degrade gracefully:
+#   volume   — spam-robust mention count        breadth  — distinct authors (propagation)
+#   bullish  — sentiment lean                    velocity — gossip mention acceleration
+#   engagement — likes+replies                   search   — Google-Trends search acceleration
+# `breadth` is the network-effect term: an idea spreading to many people, not a
+# few accounts spamming, is what actually drives a squeeze.
+_IGNITION_W = {"volume": 0.40, "breadth": 0.20, "bullish": 0.25, "engagement": 0.15,
                "velocity": 0.20, "search": 0.15}
 # Fuel-only floor: a primed name with zero ignition still scores this fraction.
 _IGNITION_FLOOR = 0.25
@@ -97,6 +99,7 @@ def _ignition_score(
     engagement: float,
     velocity: Optional[float] = None,
     search: Optional[float] = None,
+    breadth: Optional[float] = None,
 ) -> tuple[float, dict[str, float]]:
     """The trigger, 0..1: bullish chatter volume × lean × amplification ×
     acceleration. Only *bullish* sentiment ignites a squeeze (bearish/neutral on a
@@ -114,6 +117,8 @@ def _ignition_score(
         terms["velocity"] = _velocity_term(velocity)
     if search is not None:
         terms["search"] = max(0.0, min(search, 1.0))
+    if breadth is not None:
+        terms["breadth"] = _sat(breadth, _BREADTH_SAT)
     wsum = sum(_IGNITION_W[k] for k in terms)
     ign = sum(_IGNITION_W[k] * v for k, v in terms.items()) / wsum
     return ign, {k: round(v, 4) for k, v in terms.items()}
@@ -163,6 +168,7 @@ class SqueezeCandidate:
     short_ratio: Optional[float] = None      # days to cover
     float_shares: Optional[float] = None
     n_posts: int = 0
+    breadth: int = 0                         # distinct social authors (propagation)
     focus_score: float = 0.0
     social_sentiment: float = 0.0            # -1..1 (LM)
     social_velocity: Optional[float] = None  # gossip mention acceleration (x baseline)
@@ -199,16 +205,18 @@ def score_candidate(
     focus = float(social.get("focus_score", 0.0)) if social else 0.0
     engagement = int(social.get("engagement", 0)) if social else 0
     n_posts = int(social.get("n_posts", 0)) if social else 0
+    breadth = int(social.get("breadth", 0)) if social else 0
 
     search_t = search_signal.get("search_term") if search_signal else None
     search_vel = search_signal.get("build_velocity") if search_signal else None
     search_clk = search_signal.get("clock") if search_signal else None
-    ign, ign_c = _ignition_score(focus, sentiment, engagement, velocity, search_t)
+    ign, ign_c = _ignition_score(focus, sentiment, engagement, velocity, search_t,
+                                 breadth if social else None)
 
     return SqueezeCandidate(
         ticker=ticker,
         short_pct_float=spf, short_ratio=sr, float_shares=fl,
-        n_posts=n_posts, focus_score=round(focus, 3),
+        n_posts=n_posts, breadth=breadth, focus_score=round(focus, 3),
         social_sentiment=round(sentiment, 4),
         social_velocity=round(velocity, 2) if velocity is not None else None,
         search_velocity=round(search_vel, 2) if search_vel is not None else None,

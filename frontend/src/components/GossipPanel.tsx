@@ -37,7 +37,7 @@ function GossipRow({ item }: { item: GossipItem }) {
           {item.velocity.toFixed(1)}×
         </span>
         <span className="block text-[10px] text-slate-400">
-          {item.recent_count} recent · <span className={DIR_COLOR[item.direction]}>{item.direction}</span>
+          {item.recent_count} recent · {item.breadth} voices · <span className={DIR_COLOR[item.direction]}>{item.direction}</span>
         </span>
       </span>
     </li>
@@ -62,6 +62,10 @@ function About({ params }: { params?: GossipResult["params"] }) {
         </li>
         <li>
           <span className="text-slate-300 font-semibold">Recent</span> — mentions in the last {rh}.
+        </li>
+        <li>
+          <span className="text-slate-300 font-semibold">Voices</span> — distinct authors behind that chatter.
+          30 posts from 3 accounts is noise; 30 from 30 is the idea actually <em>propagating</em> through the network.
         </li>
         <li>
           <span className="text-slate-300 font-semibold">Direction</span> — bullish / bearish lean of that recent chatter.

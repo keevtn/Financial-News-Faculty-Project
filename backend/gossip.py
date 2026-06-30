@@ -18,7 +18,9 @@ collection, source_type="social"):
                   (the period *before* the recent window), floored so a name
                   emerging from zero still scores
   velocity      — recent_count / baseline_rate  (>1 = above normal)
-  gossip_score  — 100·(0.65·velocity_term + 0.35·volume_term), both saturating
+  breadth       — distinct authors in the recent window (network propagation:
+                  many people talking, not one account repeating)
+  gossip_score  — 100·(0.50·velocity + 0.20·volume + 0.30·breadth), all saturating
 
 Only names with >= ``min_recent`` recent mentions qualify (kills 1-vs-0 noise).
 
@@ -37,6 +39,7 @@ log = logging.getLogger("gossip")
 
 _VELOCITY_SAT = 5.0    # 5x baseline -> max acceleration term
 _VOLUME_SAT = 15.0     # 15 recent mentions -> max volume term
+_BREADTH_SAT = 6.0     # 6 distinct authors -> max propagation term
 _BASELINE_FLOOR = 0.5  # min baseline rate; controls how much "from zero" scores
 
 
@@ -65,7 +68,7 @@ def _velocity_for(
 
 
 def score_gossip(
-    mentions: dict[str, list[tuple[datetime, Optional[float]]]],
+    mentions: dict[str, list[tuple[datetime, Optional[float], Optional[str]]]],
     *,
     now: datetime,
     recent_hours: float = 6.0,
@@ -74,30 +77,36 @@ def score_gossip(
     top_k: int = 20,
 ) -> list[dict[str, Any]]:
     """
-    Rank tickers by mention-velocity gossip score.
+    Rank tickers by a mention-velocity + **breadth** gossip score.
 
-    ``mentions`` maps ticker -> list of ``(published_at, sentiment|None)``. Pure
-    and deterministic; ``now`` is injected so it's testable.
+    ``mentions`` maps ticker -> list of ``(published_at, sentiment|None, author|None)``.
+    Breadth (distinct recent authors) is the network-effect/propagation term: an
+    idea reaching many people is spreading; the same count from a few accounts is
+    spam. Pure and deterministic; ``now`` is injected so it's testable.
     """
     recent_cut = now - timedelta(hours=recent_hours)
 
     ranked: list[dict[str, Any]] = []
     for ticker, posts in mentions.items():
         recent_count, baseline_rate, velocity = _velocity_for(
-            [t for t, _ in posts], now, recent_hours, baseline_days
+            [p[0] for p in posts], now, recent_hours, baseline_days
         )
         if recent_count < min_recent:
             continue
-        sents = [s for t, s in posts if t >= recent_cut and s is not None]
+        recent = [p for p in posts if p[0] >= recent_cut]
+        sents = [p[1] for p in recent if p[1] is not None]
         mean_sent = sum(sents) / len(sents) if sents else 0.0
+        breadth = len({p[2] for p in recent if len(p) > 2 and p[2]})
 
         vel_term = min(velocity / _VELOCITY_SAT, 1.0)
         vol_term = min(recent_count / _VOLUME_SAT, 1.0)
-        gossip_score = round(100.0 * (0.65 * vel_term + 0.35 * vol_term), 2)
+        breadth_term = min(breadth / _BREADTH_SAT, 1.0)
+        gossip_score = round(100.0 * (0.50 * vel_term + 0.20 * vol_term + 0.30 * breadth_term), 2)
 
         ranked.append({
             "ticker": ticker,
             "recent_count": recent_count,
+            "breadth": breadth,
             "baseline_rate": round(baseline_rate, 3),
             "velocity": round(velocity, 2),
             "mean_sentiment": round(mean_sent, 4),
@@ -127,19 +136,22 @@ async def detect_gossip(
     now = now or datetime.now(tz=timezone.utc)
     start = now - timedelta(days=baseline_days)
     query = {"published_at": {"$gte": start, "$lte": now}, "source_type": "social"}
-    projection = {"_id": 0, "tickers": 1, "published_at": 1, "sentiment": 1}
+    projection = {"_id": 0, "tickers": 1, "published_at": 1, "sentiment": 1,
+                  "extra.bsky_handle": 1, "extra.st_user": 1}
     docs = await (
         social_collection.find(query, projection).limit(50_000).to_list(length=50_000)
     )
 
-    mentions: dict[str, list[tuple[datetime, Optional[float]]]] = defaultdict(list)
+    mentions: dict[str, list[tuple[datetime, Optional[float], Optional[str]]]] = defaultdict(list)
     for d in docs:
         pub = d.get("published_at")
         if not isinstance(pub, datetime):
             continue
         sent = (d.get("sentiment") or {}).get("score")
+        extra = d.get("extra") or {}
+        author = extra.get("bsky_handle") or extra.get("st_user")  # who posted it
         for t in (d.get("tickers") or ()):
-            mentions[t].append((pub, sent))
+            mentions[t].append((pub, sent, author))
 
     items = score_gossip(
         mentions, now=now, recent_hours=recent_hours,

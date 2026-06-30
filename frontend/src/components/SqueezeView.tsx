@@ -136,6 +136,14 @@ function SqueezeCard({ item }: { item: SqueezeItem }) {
             <span className="text-slate-400">
               <span className="font-mono text-slate-200">{item.n_posts}</span> posts
             </span>
+            {item.breadth > 0 && (
+              <>
+                <span className="text-slate-400">·</span>
+                <span className="text-slate-400" title="Distinct authors talking — propagation, not one account repeating">
+                  <span className="font-mono text-slate-200">{item.breadth}</span> voices
+                </span>
+              </>
+            )}
             <span className="text-slate-400">·</span>
             <span className="text-slate-400">
               sent{" "}

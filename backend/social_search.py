@@ -236,9 +236,14 @@ async def gather_social(
                  "handle": p["handle"], "created_at": p["created_at"].isoformat()}
                 for p in sorted(bsky, key=lambda p: p["likes"] + p["replies"], reverse=True)[:3]
             ]
+            # Breadth = distinct authors talking — propagation, not spam: 30 posts
+            # from 3 accounts is noise; 30 posts from 30 accounts is the idea
+            # actually spreading through the network.
+            breadth = len({p["handle"] for p in bsky if p.get("handle")})
             out[sym] = {
                 "ticker": sym,
                 "n_posts": len(texts),
+                "breadth": breadth,
                 "focus_score": round(focus, 3),
                 "engagement": engagement,
                 "texts": texts,

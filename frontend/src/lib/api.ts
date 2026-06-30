@@ -434,6 +434,7 @@ export interface SqueezeItem {
   short_ratio: number | null;       // days to cover
   float_shares: number | null;
   n_posts: number;
+  breadth: number;                  // distinct social authors (propagation)
   focus_score: number;
   social_sentiment: number;         // -1..1
   social_velocity: number | null;   // gossip mention acceleration (× baseline)
@@ -606,6 +607,7 @@ export interface GossipItem {
   rank: number;
   ticker: string;
   recent_count: number;
+  breadth: number;           // distinct authors in the recent window (propagation)
   baseline_rate: number;
   velocity: number;          // recent rate ÷ trailing baseline (>1 = accelerating)
   mean_sentiment: number;    // -1..1

@@ -71,8 +71,15 @@ class TestIgnitionScore:
     def test_search_term_lifts_ignition(self):
         base, _ = sq._ignition_score(6.0, 0.2, 20, velocity=1.0)
         withs, c = sq._ignition_score(6.0, 0.2, 20, velocity=1.0, search=0.8)
-        assert "search" in c and c["search"] == 0.8
-        assert withs > base                            # a strong search term raises ignition
+        assert "search" in c and c["search"] == 0.8                # a strong search term raises ignition
+        assert withs > base
+
+    def test_breadth_lifts_ignition(self):
+        # propagation: many distinct authors raises ignition over the same volume
+        base, _ = sq._ignition_score(6.0, 0.2, 20)
+        wide, c = sq._ignition_score(6.0, 0.2, 20, breadth=8)
+        assert "breadth" in c and c["breadth"] == 1.0             # 8 distinct authors saturates
+        assert wide > base
 
     def test_quiet_is_zero(self):
         ign, _ = sq._ignition_score(0.0, 0.0, 0.0)
@@ -142,6 +149,13 @@ class TestScoreCandidate:
         hot = sq.score_candidate("X", short, social, 0.2, velocity=5.0)   # accelerating
         assert hot.social_velocity == 5.0
         assert hot.ignition_score > flat.ignition_score
+
+    def test_records_breadth(self):
+        short = {"short_pct_float": 0.30, "short_ratio": 5.0, "float_shares": 40e6}
+        social = {"focus_score": 6.0, "engagement": 20, "n_posts": 30, "breadth": 12,
+                  "sources": ["bluesky"], "top_posts": []}
+        c = sq.score_candidate("X", short, social, 0.2)
+        assert c.breadth == 12
 
 
 class TestGradeSqueeze:
