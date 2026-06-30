@@ -54,6 +54,31 @@ log = logging.getLogger("catalyst_ranker")
 # (e.g. claude-sonnet-4-6 or claude-haiku-4-5 are much cheaper than Opus).
 MODEL = os.environ.get("CATALYST_MODEL", "claude-opus-4-8")
 
+# --- Catalyst profiles ----------------------------------------------------- #
+# A "profile" scopes the same ranking pipeline to a subset of structured sources,
+# so the dashboard can run more than one catalyst lane off one engine:
+#   • combined   — general market news + regulatory filings (the broad lane)
+#   • regulatory — SEC + FDA only: pure filings/enforcement catalysts, no wire
+#                  recap noise (the "is something *official* happening?" lane)
+# Each persisted run records its profile; reads/scheduling are keyed by it.
+CATALYST_PROFILES: dict[str, dict[str, Any]] = {
+    "combined": {
+        "label": "Market + Regulatory",
+        "source_types": ["rss", "sec", "fda"],
+    },
+    "regulatory": {
+        "label": "SEC + FDA only",
+        "source_types": ["sec", "fda"],
+    },
+}
+DEFAULT_PROFILE = "combined"
+
+
+def resolve_profile(profile: Optional[str]) -> tuple[str, list[str]]:
+    """(name, source_types) for a profile; falls back to the default if unknown."""
+    name = profile if profile in CATALYST_PROFILES else DEFAULT_PROFILE
+    return name, list(CATALYST_PROFILES[name]["source_types"])
+
 # --- Tunables -------------------------------------------------------------- #
 
 # Materiality by source type: regulatory filings move expectations more than a
@@ -404,12 +429,13 @@ def _direction_from_sentiment(score: float) -> str:
 # --- Mongo I/O ------------------------------------------------------------- #
 
 async def _fetch_window_docs(
-    collection: Any, start: datetime, end: datetime, cap: int = 4000
+    collection: Any, start: datetime, end: datetime, cap: int = 4000,
+    source_types: Optional[list[str]] = None,
 ) -> list[dict[str, Any]]:
     """Structured (non-social) docs published within the window."""
     query = {
         "published_at": {"$gte": start, "$lte": end},
-        "source_type": {"$in": ["rss", "sec", "fda"]},
+        "source_type": {"$in": source_types or ["rss", "sec", "fda"]},
     }
     projection = {
         "_id": 0, "content_hash": 1, "source": 1, "source_type": 1,
@@ -425,17 +451,20 @@ async def _fetch_window_docs(
 
 
 async def _compute_baseline(
-    collection: Any, before: datetime, baseline_days: int = 14
+    collection: Any, before: datetime, baseline_days: int = 14,
+    source_types: Optional[list[str]] = None,
 ) -> dict[str, float]:
     """
     Average daily mention count per ticker over the trailing ``baseline_days``
     (ending at ``before``). Divided by the number of *days actually present* in
-    the corpus so a young database is not unfairly penalised.
+    the corpus so a young database is not unfairly penalised. The baseline is
+    scoped to the same ``source_types`` as the window so abnormal-attention is
+    measured within the profile (regulatory volume vs its own regulatory norm).
     """
     start = before - timedelta(days=baseline_days)
     query = {
         "published_at": {"$gte": start, "$lt": before},
-        "source_type": {"$in": ["rss", "sec", "fda"]},
+        "source_type": {"$in": source_types or ["rss", "sec", "fda"]},
     }
     projection = {"_id": 0, "tickers": 1, "published_at": 1}
     docs = await (
@@ -686,6 +715,7 @@ async def rank_catalysts(
     model: Optional[str] = None,
     trigger: str = "api",
     weights: Optional[dict[str, float]] = None,
+    profile: str = DEFAULT_PROFILE,
 ) -> dict[str, Any]:
     """
     Run the full pipeline and return a ranking result dict (not yet persisted).
@@ -693,13 +723,17 @@ async def rank_catalysts(
     ``model`` forces a specific LLM for the deep read (else ``CATALYST_MODEL``);
     ``trigger`` records how the run was initiated ("manual" | "scheduled" |
     "api") for cooldown accounting; ``weights`` overrides the composite
-    pre-score weights (the auto-tuner passes the tuned vector, else defaults).
+    pre-score weights (the auto-tuner passes the tuned vector, else defaults);
+    ``profile`` scopes which source types are ranked (see ``CATALYST_PROFILES``).
     """
     now = now or datetime.now(tz=timezone.utc)
     start, end = overnight_window(now)
+    profile, source_types = resolve_profile(profile)
 
-    docs = await _fetch_window_docs(collection, start, end)
-    baseline = await _compute_baseline(collection, start, baseline_days)
+    docs = await _fetch_window_docs(collection, start, end, source_types=source_types)
+    baseline = await _compute_baseline(
+        collection, start, baseline_days, source_types=source_types
+    )
 
     if ticker_extractor is None:
         try:
@@ -789,6 +823,9 @@ async def rank_catalysts(
         "window_start": start,
         "window_end": end,
         "trigger": trigger,
+        "profile": profile,
+        "profile_label": CATALYST_PROFILES[profile]["label"],
+        "source_types_scanned": source_types,
         "model": (model or MODEL) if used_llm else None,
         "used_llm": used_llm,
         "llm_status": llm_status,  # None on success; reason string on fallback
@@ -796,6 +833,7 @@ async def rank_catalysts(
             "top_k": top_k,
             "min_sources": min_sources,
             "baseline_days": baseline_days,
+            "profile": profile,
         },
         "candidate_count": len(ranked),
         "doc_count": len(docs),
@@ -822,10 +860,18 @@ async def save_ranking(rankings_collection: Any, result: dict[str, Any]) -> None
 _READ_EXCLUDE = {"_id": 0, "prompt": 0, "raw_llm": 0, "items.article_hashes": 0}
 
 
-async def get_latest_ranking(rankings_collection: Any) -> Optional[dict[str, Any]]:
-    """Return the most recent persisted ranking (minus heavy internals), or None."""
+async def get_latest_ranking(
+    rankings_collection: Any, profile: Optional[str] = None
+) -> Optional[dict[str, Any]]:
+    """
+    Return the most recent persisted ranking (minus heavy internals), or None.
+
+    ``profile`` filters to one catalyst lane; ``None`` returns the most recent of
+    any profile (back-compat for callers that don't distinguish lanes).
+    """
+    query = {"profile": profile} if profile else {}
     docs = await (
-        rankings_collection.find({}, _READ_EXCLUDE)
+        rankings_collection.find(query, _READ_EXCLUDE)
         .sort("generated_at", -1)
         .limit(1)
         .to_list(length=1)

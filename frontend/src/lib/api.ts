@@ -271,23 +271,40 @@ export interface CatalystRanking {
   generated_at: string;
   window_start: string;
   window_end: string;
+  profile?: string;                  // which lane produced this run
+  profile_label?: string;
+  source_types_scanned?: string[];
   model: string | null;
   used_llm: boolean;
   llm_status: string | null;
-  params: { top_k: number; min_sources: number; baseline_days: number };
+  params: { top_k: number; min_sources: number; baseline_days: number; profile?: string };
   candidate_count: number;
   doc_count: number;
   items: CatalystItem[];
 }
 
 /**
- * Fetch the most recent persisted catalyst ranking, or null if none exists yet
- * or the API is unreachable. Generation happens server-side (POST /api/catalyst/run,
- * which is key-protected) — this endpoint is a public read.
+ * Catalyst lanes the dashboard can switch between. Mirrors the backend
+ * CATALYST_PROFILES registry; kept as a constant to avoid an extra round-trip
+ * (the GET /api/catalyst/profiles endpoint exists for programmatic clients).
  */
-export async function fetchLatestCatalystRanking(): Promise<CatalystRanking | null> {
+export const CATALYST_PROFILES: ReadonlyArray<{ name: string; label: string; hint: string }> = [
+  { name: "combined", label: "Market + Regulatory", hint: "All newswires plus SEC & FDA" },
+  { name: "regulatory", label: "SEC + FDA only", hint: "Pure filings & enforcement — no wire recaps" },
+];
+export const DEFAULT_CATALYST_PROFILE = "combined";
+
+/**
+ * Fetch the most recent persisted catalyst ranking for ``profile`` (defaults to
+ * the combined lane), or null if none exists yet or the API is unreachable.
+ * Generation happens server-side (POST /api/catalyst/run, key-protected) — this
+ * endpoint is a public read.
+ */
+export async function fetchLatestCatalystRanking(
+  profile: string = DEFAULT_CATALYST_PROFILE,
+): Promise<CatalystRanking | null> {
   try {
-    const res = await fetch(`${API_BASE}/api/catalyst/latest`);
+    const res = await fetch(`${API_BASE}/api/catalyst/latest?profile=${encodeURIComponent(profile)}`);
     if (!res.ok) return null;
     const data = await res.json();
     return (data.ranking ?? null) as CatalystRanking | null;
@@ -329,13 +346,18 @@ export type CatalystRunResult =
   | { ok: false; rateLimited: false; error: string };
 
 /**
- * Trigger a fresh full-Opus catalyst run via the **same-origin** Next.js proxy
- * (`/api/catalyst/run`), which holds the secret API key server-side. The
- * backend caps manual runs to once per hour and returns 429 on cooldown.
+ * Trigger a fresh full-Opus catalyst run for ``profile`` via the **same-origin**
+ * Next.js proxy (`/api/catalyst/run`), which holds the secret API key
+ * server-side. The backend caps manual runs to once per hour *per profile* and
+ * returns 429 on cooldown.
  */
-export async function triggerCatalystRun(): Promise<CatalystRunResult> {
+export async function triggerCatalystRun(
+  profile: string = DEFAULT_CATALYST_PROFILE,
+): Promise<CatalystRunResult> {
   try {
-    const res = await fetch("/api/catalyst/run", { method: "POST" });
+    const res = await fetch(`/api/catalyst/run?profile=${encodeURIComponent(profile)}`, {
+      method: "POST",
+    });
     if (res.ok) return { ok: true };
 
     if (res.status === 429) {

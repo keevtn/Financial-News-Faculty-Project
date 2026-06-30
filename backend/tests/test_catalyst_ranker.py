@@ -203,3 +203,53 @@ class TestResolveMarketCaps:
         caps = asyncio.run(cr._resolve_market_caps(["X", "Y"], {}))   # no Finviz data
         assert caps == {"X": 2.0e9, "Y": 2.0e9}
         assert called["tickers"] == ["X", "Y"]   # Yahoo asked for all of them
+
+
+# --- catalyst profiles ----------------------------------------------------- #
+
+class _RecordingCursor:
+    def __init__(self, query):
+        self.query = query
+    def sort(self, *a, **k): return self
+    def limit(self, *a, **k): return self
+    async def to_list(self, length=None): return []
+
+
+class _RecordingColl:
+    """Captures the query each find() receives so we can assert source-type scope."""
+    def __init__(self):
+        self.queries = []
+    def find(self, query, projection=None):
+        self.queries.append(query)
+        return _RecordingCursor(query)
+
+
+class TestProfiles:
+    def test_resolve_known(self):
+        assert cr.resolve_profile("combined") == ("combined", ["rss", "sec", "fda"])
+        assert cr.resolve_profile("regulatory") == ("regulatory", ["sec", "fda"])
+
+    def test_resolve_unknown_falls_back_to_default(self):
+        assert cr.resolve_profile("nope") == (cr.DEFAULT_PROFILE, ["rss", "sec", "fda"])
+        assert cr.resolve_profile(None)[0] == cr.DEFAULT_PROFILE
+
+    def test_window_query_scoped_to_source_types(self):
+        from datetime import datetime, timezone
+        coll = _RecordingColl()
+        now = datetime(2026, 6, 30, tzinfo=timezone.utc)
+        asyncio.run(cr._fetch_window_docs(coll, now, now, source_types=["sec", "fda"]))
+        assert coll.queries[0]["source_type"] == {"$in": ["sec", "fda"]}
+
+    def test_baseline_query_scoped_to_source_types(self):
+        from datetime import datetime, timezone
+        coll = _RecordingColl()
+        now = datetime(2026, 6, 30, tzinfo=timezone.utc)
+        asyncio.run(cr._compute_baseline(coll, now, source_types=["sec", "fda"]))
+        assert coll.queries[0]["source_type"] == {"$in": ["sec", "fda"]}
+
+    def test_window_defaults_to_all_three(self):
+        from datetime import datetime, timezone
+        coll = _RecordingColl()
+        now = datetime(2026, 6, 30, tzinfo=timezone.utc)
+        asyncio.run(cr._fetch_window_docs(coll, now, now))
+        assert coll.queries[0]["source_type"] == {"$in": ["rss", "sec", "fda"]}

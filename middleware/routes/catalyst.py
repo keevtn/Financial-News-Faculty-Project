@@ -28,6 +28,8 @@ from fastapi.security.api_key import APIKeyHeader
 
 import catalyst_backtest
 from catalyst_ranker import (
+    CATALYST_PROFILES,
+    DEFAULT_PROFILE,
     get_latest_ranking,
     grade_run,
     rank_catalysts,
@@ -70,9 +72,21 @@ def _universe_collection(request: Request) -> Any:
     return coll
 
 
-async def _manual_cooldown_remaining(coll: Any) -> int:
+def _validate_profile(profile: str) -> str:
+    """422 on an unknown catalyst profile; echoes back the valid one."""
+    if profile not in CATALYST_PROFILES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown profile '{profile}'. Valid: {sorted(CATALYST_PROFILES)}",
+        )
+    return profile
+
+
+async def _manual_cooldown_remaining(coll: Any, profile: str) -> int:
     """
-    Seconds left before another **manual** run is allowed (0 = allowed now).
+    Seconds left before another **manual** run of this profile is allowed
+    (0 = allowed now). Per-profile so each lane (combined / regulatory) gets its
+    own hourly Opus budget rather than competing for one shared slot.
 
     Fail closed: if the last-manual-run timestamp can't be read (e.g. MongoDB
     down) we cannot enforce the cost cap, so we block by raising 503 rather than
@@ -80,7 +94,7 @@ async def _manual_cooldown_remaining(coll: Any) -> int:
     """
     try:
         docs = await (
-            coll.find({"trigger": "manual"}, {"_id": 0, "generated_at": 1})
+            coll.find({"trigger": "manual", "profile": profile}, {"_id": 0, "generated_at": 1})
             .sort("generated_at", -1).limit(1).to_list(length=1)
         )
     except Exception as exc:  # noqa: BLE001
@@ -116,13 +130,33 @@ async def _load_tuned_weights(request: Request) -> Optional[dict[str, float]]:
     return None
 
 
+@router.get("/profiles")
+@limiter.limit("60/minute")
+async def profiles(request: Request) -> dict[str, Any]:
+    """The catalyst lanes the dashboard can switch between (name, label, scope)."""
+    return {
+        "default": DEFAULT_PROFILE,
+        "profiles": [
+            {"name": name, "label": cfg["label"], "source_types": cfg["source_types"]}
+            for name, cfg in CATALYST_PROFILES.items()
+        ],
+    }
+
+
 @router.get("/latest")
 @limiter.limit("60/minute")
-async def latest(request: Request) -> dict[str, Any]:
-    """Return the most recent persisted catalyst ranking."""
-    result = await get_latest_ranking(_rankings_collection(request))
+async def latest(
+    request: Request,
+    profile: str = Query(default=DEFAULT_PROFILE),
+) -> dict[str, Any]:
+    """Return the most recent persisted catalyst ranking for ``profile``."""
+    profile = _validate_profile(profile)
+    result = await get_latest_ranking(_rankings_collection(request), profile=profile)
     if result is None:
-        return {"ranking": None, "note": "No ranking generated yet — POST /api/catalyst/run"}
+        return {
+            "ranking": None, "profile": profile,
+            "note": f"No '{profile}' ranking yet — POST /api/catalyst/run?profile={profile}",
+        }
     return {"ranking": result}
 
 
@@ -241,15 +275,18 @@ async def run(
     baseline_days: int = Query(default=14, ge=1, le=90),
     use_llm: bool = Query(default=True),
     trigger: str = Query(default="manual", pattern="^(manual|scheduled|api)$"),
+    profile: str = Query(default=DEFAULT_PROFILE),
 ) -> dict[str, Any]:
     """
-    Generate, persist, and return a new catalyst ranking.
+    Generate, persist, and return a new catalyst ranking for ``profile``.
 
     Human-triggered (``trigger=manual``, the frontend "Run now" button via the
-    Next.js proxy) runs are capped to once per hour globally (cost guard) and
-    forced to full Opus regardless of ``CATALYST_MODEL``. The slowapi limit is a
-    loose anti-spam backstop; the real cap is the persisted-timestamp cooldown.
+    Next.js proxy) runs are capped to once per hour *per profile* (cost guard)
+    and forced to full Opus regardless of ``CATALYST_MODEL``. The slowapi limit
+    is a loose anti-spam backstop; the real cap is the persisted-timestamp
+    cooldown.
     """
+    profile = _validate_profile(profile)
     news = getattr(request.app.state, "news_collection", None)
     if news is None:
         raise HTTPException(status_code=503, detail="News store unavailable")
@@ -257,12 +294,12 @@ async def run(
 
     model: str | None = None
     if trigger == "manual":
-        remaining = await _manual_cooldown_remaining(coll)
+        remaining = await _manual_cooldown_remaining(coll, profile)
         if remaining > 0:
             raise HTTPException(
                 status_code=429,
                 detail={
-                    "detail": "Manual catalyst run is on cooldown.",
+                    "detail": f"Manual '{profile}' catalyst run is on cooldown.",
                     "retry_after_seconds": remaining,
                 },
                 headers={"Retry-After": str(remaining)},
@@ -278,6 +315,7 @@ async def run(
         model=model,
         trigger=trigger,
         weights=await _load_tuned_weights(request),
+        profile=profile,
     )
     await save_ranking(coll, result)
     return {"ranking": result}

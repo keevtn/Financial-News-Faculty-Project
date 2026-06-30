@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from "react";
 import {
+  CATALYST_PROFILES,
   CatalystItem,
   CatalystRanking,
   CatalystTrackRecord,
   CatalystUniverseItem,
+  DEFAULT_CATALYST_PROFILE,
   Direction,
   TickerQuote,
   fetchCatalystTrackRecord,
@@ -419,6 +421,7 @@ export default function CatalystView() {
   const [trackRecord, setTrackRecord] = useState<CatalystTrackRecord | null>(null);
   const [universe, setUniverse] = useState<CatalystUniverseItem[]>([]);
   const [quotes, setQuotes] = useState<Record<string, TickerQuote>>({});
+  const [profile, setProfile] = useState<string>(DEFAULT_CATALYST_PROFILE);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [runMsg, setRunMsg] = useState<string | null>(null);
@@ -426,9 +429,9 @@ export default function CatalystView() {
   async function handleRun() {
     setRunning(true);
     setRunMsg(null);
-    const result = await triggerCatalystRun();
+    const result = await triggerCatalystRun(profile);
     if (result.ok) {
-      await load(); // re-read the freshly generated ranking
+      await load(profile); // re-read the freshly generated ranking
     } else if (result.rateLimited) {
       const mins = Math.max(1, Math.ceil(result.retryAfterSeconds / 60));
       setRunMsg(`On cooldown — try again in ~${mins} min.`);
@@ -438,10 +441,10 @@ export default function CatalystView() {
     setRunning(false);
   }
 
-  async function load() {
+  async function load(p: string = profile) {
     setLoading(true);
     const [r, tr, uni] = await Promise.all([
-      fetchLatestCatalystRanking(),
+      fetchLatestCatalystRanking(p),
       fetchCatalystTrackRecord(),
       fetchCatalystUniverse(40),
     ]);
@@ -453,12 +456,17 @@ export default function CatalystView() {
     if (r?.items?.length) {
       const q = await fetchTickerQuotes(r.items.map((i) => i.ticker));
       setQuotes(q);
+    } else {
+      setQuotes({});
     }
   }
 
+  // Reload whenever the selected lane changes (and on mount).
   useEffect(() => {
-    load();
-  }, []);
+    setRunMsg(null);
+    load(profile);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile]);
 
   return (
     <div className="flex-1 overflow-y-auto scrollbar-thin">
@@ -469,6 +477,34 @@ export default function CatalystView() {
           <span className="text-[10px] text-slate-400">
             Tickers ranked by the strength of overnight news catalysts
           </span>
+        </div>
+
+        {/* lane selector: combined (all sources) vs regulatory (SEC + FDA only) */}
+        <div
+          role="tablist"
+          aria-label="Catalyst lane"
+          className="inline-flex rounded-md border border-[#1e2d4a] overflow-hidden"
+        >
+          {CATALYST_PROFILES.map((p) => {
+            const active = p.name === profile;
+            return (
+              <button
+                key={p.name}
+                role="tab"
+                aria-selected={active}
+                title={p.hint}
+                onClick={() => setProfile(p.name)}
+                disabled={running}
+                className={`text-[10px] uppercase tracking-wider px-2.5 py-1 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#00d4aa] disabled:opacity-50 ${
+                  active
+                    ? "bg-[#00d4aa]/15 text-[#00d4aa]"
+                    : "text-slate-400 hover:text-slate-200 hover:bg-[#1e2d4a]/40"
+                }`}
+              >
+                {p.label}
+              </button>
+            );
+          })}
         </div>
 
         {ranking && (
@@ -506,13 +542,13 @@ export default function CatalystView() {
             onClick={handleRun}
             disabled={running || loading}
             aria-busy={running}
-            title="Generate a fresh AI ranking now (full Opus; limited to once per hour)"
+            title="Generate a fresh AI ranking for this lane now (full Opus; once per hour per lane)"
             className="text-[10px] uppercase tracking-wider px-2.5 py-1 rounded border border-[#00d4aa]/40 bg-[#00d4aa]/10 text-[#00d4aa] hover:bg-[#00d4aa]/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#00d4aa] transition-colors disabled:opacity-50"
           >
             {running ? "Running Opus…" : "⚡ Run now (AI)"}
           </button>
           <button
-            onClick={load}
+            onClick={() => load()}
             disabled={loading || running}
             className="text-[10px] uppercase tracking-wider px-2.5 py-1 rounded border border-[#1e2d4a] text-slate-400 hover:text-[#00d4aa] hover:border-[#2d4470] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#00d4aa] transition-colors disabled:opacity-50"
           >
@@ -528,16 +564,22 @@ export default function CatalystView() {
           <p className="text-sm text-slate-400">Loading latest ranking…</p>
         ) : !ranking ? (
           <div className="max-w-lg mx-auto text-center py-16">
-            <p className="text-sm text-slate-300 font-semibold">No ranking generated yet</p>
+            <p className="text-sm text-slate-300 font-semibold">
+              No ranking yet for the{" "}
+              <span className="text-[#00d4aa]">
+                {CATALYST_PROFILES.find((p) => p.name === profile)?.label ?? profile}
+              </span>{" "}
+              lane
+            </p>
             <p className="text-xs text-slate-400 mt-2 leading-relaxed">
               Catalyst rankings are produced on demand. Use{" "}
               <span className="text-[#00d4aa] font-semibold">⚡ Run now (AI)</span> above to
-              generate one with full Opus (limited to once per hour), ideally before the market opens.
+              generate one with full Opus (once per hour per lane), ideally before the market opens.
             </p>
           </div>
         ) : ranking.items.length === 0 ? (
           <p className="text-sm text-slate-400">
-            The latest run found no qualifying catalysts in the overnight window.
+            The latest {ranking.profile_label ?? ""} run found no qualifying catalysts in the overnight window.
           </p>
         ) : (
           <div className="flex flex-col gap-3 max-w-3xl mx-auto">

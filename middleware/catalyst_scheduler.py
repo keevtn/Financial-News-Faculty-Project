@@ -98,6 +98,7 @@ async def _tick(app: Any) -> None:
         return
 
     from catalyst_ranker import (
+        CATALYST_PROFILES,
         get_latest_ranking,
         grade_run,
         rank_catalysts,
@@ -105,23 +106,26 @@ async def _tick(app: Any) -> None:
     )
 
     now = datetime.now(tz=timezone.utc)
+    run_hour = _env_int("CATALYST_RUN_HOUR_ET", 8)
+    use_llm = _env_flag("CATALYST_SCHED_LLM", True)
 
-    # 1) Pre-market run, once per trading day.
-    try:
-        latest = await get_latest_ranking(coll)
-        latest_gen = latest.get("generated_at") if latest else None
-        if _should_run(now, latest_gen, _env_int("CATALYST_RUN_HOUR_ET", 8)):
-            use_llm = _env_flag("CATALYST_SCHED_LLM", True)
-            log.info("catalyst scheduler: generating pre-market ranking (llm=%s)", use_llm)
-            result = await rank_catalysts(
-                news, use_llm=use_llm, trigger="scheduled",
-                weights=await _load_tuned_weights(meta),
-            )
-            await save_ranking(coll, result)
-            log.info("catalyst scheduler: ranking saved (run_id=%s used_llm=%s)",
-                     result.get("run_id"), result.get("used_llm"))
-    except Exception as exc:  # noqa: BLE001
-        log.error("catalyst scheduler run step failed: %s", exc)
+    # 1) Pre-market run, once per trading day, per profile (combined + regulatory).
+    for profile in CATALYST_PROFILES:
+        try:
+            latest = await get_latest_ranking(coll, profile=profile)
+            latest_gen = latest.get("generated_at") if latest else None
+            if _should_run(now, latest_gen, run_hour):
+                log.info("catalyst scheduler: generating pre-market ranking (profile=%s llm=%s)",
+                         profile, use_llm)
+                result = await rank_catalysts(
+                    news, use_llm=use_llm, trigger="scheduled",
+                    weights=await _load_tuned_weights(meta), profile=profile,
+                )
+                await save_ranking(coll, result)
+                log.info("catalyst scheduler: ranking saved (profile=%s run_id=%s used_llm=%s)",
+                         profile, result.get("run_id"), result.get("used_llm"))
+        except Exception as exc:  # noqa: BLE001
+            log.error("catalyst scheduler run step failed [profile=%s]: %s", profile, exc)
 
     # 2) Auto-grade ungraded runs whose session has now closed.
     try:

@@ -17,7 +17,7 @@ from fastapi import APIRouter, Query, Request
 
 import alerts as alerts_engine
 from gossip import detect_gossip
-from catalyst_ranker import get_latest_ranking
+from catalyst_ranker import DEFAULT_PROFILE, get_latest_ranking
 from squeeze_ranker import get_latest_squeeze
 from middleware.limiter import limiter
 
@@ -55,7 +55,9 @@ async def get_alerts(request: Request, nocache: bool = Query(default=False)) -> 
     if getattr(state, "squeeze_collection", None) is not None:
         squeeze_items = await _items(get_latest_squeeze(state.squeeze_collection))
     if getattr(state, "rankings_collection", None) is not None:
-        catalyst_items = await _items(get_latest_ranking(state.rankings_collection))
+        catalyst_items = await _items(
+            get_latest_ranking(state.rankings_collection, profile=DEFAULT_PROFILE)
+        )
     if getattr(state, "news_collection", None) is not None:
         gossip_items = await _items(detect_gossip(state.news_collection))
 
