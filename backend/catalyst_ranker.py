@@ -54,6 +54,12 @@ log = logging.getLogger("catalyst_ranker")
 # (e.g. claude-sonnet-4-6 or claude-haiku-4-5 are much cheaper than Opus).
 MODEL = os.environ.get("CATALYST_MODEL", "claude-opus-4-8")
 
+# Deep-read stage selector:
+#   cluster — event-typed per-story-cluster grading (catalyst_deep_read; default)
+#   rubric  — legacy one-call whole-shortlist rubric (_run_llm below)
+# Read at call time so a redeploy isn't needed to flip modes in tests.
+_DEEP_READ_MODE_ENV = "CATALYST_DEEP_READ"
+
 # --- Catalyst profiles ----------------------------------------------------- #
 # A "profile" scopes the same ranking pipeline to a subset of structured sources,
 # so the dashboard can run more than one catalyst lane off one engine:
@@ -440,7 +446,7 @@ async def _fetch_window_docs(
     projection = {
         "_id": 0, "content_hash": 1, "source": 1, "source_type": 1,
         "title": 1, "description": 1, "url": 1, "published_at": 1,
-        "tickers": 1, "sentiment": 1,
+        "tickers": 1, "sentiment": 1, "extra": 1,
     }
     return await (
         collection.find(query, projection)
@@ -761,8 +767,24 @@ async def rank_catalysts(
 
     llm_by_ticker: Optional[dict[str, Any]] = None
     prompt = raw_llm = llm_status = None
+    deep: Optional[dict[str, Any]] = None
+    deep_read_mod: Any = None
+    mode = os.environ.get(_DEEP_READ_MODE_ENV, "cluster")
     if use_llm and shortlist:
-        llm_by_ticker, prompt, raw_llm, llm_status = await _run_llm(shortlist, model=model)
+        if mode == "cluster":
+            try:
+                import catalyst_deep_read as deep_read_mod
+                deep = await deep_read_mod.deep_read(
+                    docs, shortlist, profile=profile, model=model,
+                    ticker_extractor=ticker_extractor,
+                )
+                llm_status = deep["status"]
+            except Exception as exc:  # noqa: BLE001
+                llm_status = f"cluster deep read failed: {type(exc).__name__}: {exc}"[:300]
+                log.error(llm_status)
+                deep = None
+        else:
+            llm_by_ticker, prompt, raw_llm, llm_status = await _run_llm(shortlist, model=model)
     elif not use_llm:
         llm_status = "use_llm=false (quantitative-only run requested)"
 
@@ -784,6 +806,17 @@ async def rank_catalysts(
             "components": c.components,
             "sample_articles": c.sample_articles,
             "article_hashes": c.article_hashes,
+            # Quantitative defaults; the deep read (either mode) overlays these.
+            "catalyst_score": c.pre_score,
+            "direction": _direction_from_sentiment(c.mean_sentiment),
+            "confidence": round(min(1.0, c.n_sources / 5.0), 3),
+            "rationale": (
+                f"{c.n_stories} independent stor"
+                f"{'y' if c.n_stories == 1 else 'ies'} across {c.n_sources} "
+                f"sources ({'/'.join(c.source_types)}), "
+                f"{c.abnormal_attention}x normal attention."
+            ),
+            "llm_subscores": None,
         }
         llm = (llm_by_ticker or {}).get(c.ticker)
         if llm:
@@ -799,23 +832,14 @@ async def rank_catalysts(
                     "breadth": llm.get("breadth"),
                 },
             })
-        else:
-            # Quantitative fallback: pre_score is the catalyst score.
-            item.update({
-                "catalyst_score": c.pre_score,
-                "direction": _direction_from_sentiment(c.mean_sentiment),
-                "confidence": round(min(1.0, c.n_sources / 5.0), 3),
-                "rationale": (
-                    f"{c.n_stories} independent stor"
-                    f"{'y' if c.n_stories == 1 else 'ies'} across {c.n_sources} "
-                    f"sources ({'/'.join(c.source_types)}), "
-                    f"{c.abnormal_attention}x normal attention."
-                ),
-                "llm_subscores": None,
-            })
         items.append(item)
 
-    used_llm = llm_by_ticker is not None
+    deep_graded = bool(deep and any(g["grade"] for g in deep["grades"]))
+    dropped_items: list[dict[str, Any]] = []
+    if deep_graded:
+        items, dropped_items = deep_read_mod.apply_grades_to_items(items, deep["grades"])
+
+    used_llm = llm_by_ticker is not None or deep_graded
     # Final ordering by catalyst_score (LLM if present, else pre_score).
     items.sort(key=lambda it: it["catalyst_score"], reverse=True)
     for rank, it in enumerate(items, start=1):
@@ -844,6 +868,18 @@ async def rank_catalysts(
         "items": items,
         "prompt": prompt,
         "raw_llm": raw_llm,
+        # Cluster deep-read audit trail: per-cluster inputs/raw outputs persisted
+        # for reproducibility (projected out of reads), plus the items the grader
+        # overturned as immaterial (is_material=false -> dropped from ranking).
+        "deep_read": ({
+            "mode": "cluster",
+            "model": deep["model"],
+            "clusters_considered": deep["clusters_considered"],
+            "graded": sum(1 for g in deep["grades"] if g["grade"]),
+            "cached": deep["cached"],
+            "dropped_items": dropped_items,
+            "grades": deep["grades"],
+        } if deep else None),
     }
 
 
@@ -861,7 +897,10 @@ async def save_ranking(rankings_collection: Any, result: dict[str, Any]) -> None
 # Heavy internal-only fields persisted for reproducibility but never read by any
 # client — projected out of read responses so the dashboard isn't downloading the
 # full LLM prompt + raw output + every doc hash on each Catalyst-tab load.
-_READ_EXCLUDE = {"_id": 0, "prompt": 0, "raw_llm": 0, "items.article_hashes": 0}
+_READ_EXCLUDE = {
+    "_id": 0, "prompt": 0, "raw_llm": 0, "items.article_hashes": 0,
+    "deep_read.grades.input": 0, "deep_read.grades.raw": 0,
+}
 
 
 async def get_latest_ranking(

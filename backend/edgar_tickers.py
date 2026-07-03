@@ -37,8 +37,9 @@ _TTL_SECONDS = 24 * 3600.0  # the file changes slowly; refresh daily
 _TIMEOUT = 20
 
 # Module-level cache so the ~10k-row file is fetched at most once a day per
-# process, shared across every ranking run.
-_cache: dict[str, Any] = {"fetched_at": 0.0, "cik_map": {}}
+# process, shared across every ranking run. ``name_map`` (ticker -> company
+# title) rides along on the same fetch — the file already carries the titles.
+_cache: dict[str, Any] = {"fetched_at": 0.0, "cik_map": {}, "name_map": {}}
 _lock = asyncio.Lock()
 
 
@@ -64,6 +65,25 @@ def parse_company_tickers(raw: Any) -> dict[int, str]:
             continue
         cik_map.setdefault(cik, ticker)
     return cik_map
+
+
+def parse_company_names(raw: Any) -> dict[str, str]:
+    """
+    ``{TICKER -> company title}`` from the same company_tickers.json payload.
+    Rows missing a ticker or title are skipped; first title per ticker wins
+    (dual-listed CIKs repeat the ticker with the same title).
+    """
+    rows = raw.values() if isinstance(raw, dict) else (raw or [])
+    name_map: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        ticker = str(row.get("ticker", "")).strip().upper()
+        title = str(row.get("title", "")).strip()
+        if not ticker or not title:
+            continue
+        name_map.setdefault(ticker, title)
+    return name_map
 
 
 async def _fetch_raw(session: Any = None) -> Optional[Any]:
@@ -112,6 +132,19 @@ async def load_cik_map(
             parsed = parse_company_tickers(raw)
             if parsed:
                 _cache["cik_map"] = parsed
+                _cache["name_map"] = parse_company_names(raw)
                 _cache["fetched_at"] = time.monotonic()
                 log.info("loaded %d CIK→ticker mappings", len(parsed))
         return _cache["cik_map"]
+
+
+async def load_company_names(
+    *, session: Any = None, force: bool = False
+) -> dict[str, str]:
+    """
+    Cached ``{TICKER -> company title}`` riding on the same daily fetch as
+    ``load_cik_map`` (one network call refreshes both). Same degradation: a
+    fetch failure returns the last good map, possibly empty, never raises.
+    """
+    await load_cik_map(session=session, force=force)
+    return _cache["name_map"]
