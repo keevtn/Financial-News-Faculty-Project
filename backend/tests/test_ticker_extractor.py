@@ -3,6 +3,7 @@
 from ticker_extractor import (
     TickerExtractor,
     CRYPTO_TICKERS,
+    INDEX_TICKERS,
     extract_social_tickers,
 )
 
@@ -84,6 +85,13 @@ class TestRealTickerValidation:
         ex = TickerExtractor(valid_tickers=set(_UNIVERSE) | set(CRYPTO_TICKERS))
         out = ex.extract("$BTC and $ETH pumping, $NOTREAL dumping", "")
         assert "BTC" in out and "ETH" in out
+        assert "NOTREAL" not in out
+
+    def test_index_and_extra_crypto_allowlists_survive(self):
+        universe = set(_UNIVERSE) | set(CRYPTO_TICKERS) | set(INDEX_TICKERS)
+        ex = TickerExtractor(valid_tickers=universe)
+        out = ex.extract("watching $SPX $VIX $AAVE $TAO, ignoring $NOTREAL", "")
+        assert {"SPX", "VIX", "AAVE", "TAO"} <= set(out)
         assert "NOTREAL" not in out
 
     def test_set_valid_tickers_toggles_gating(self):

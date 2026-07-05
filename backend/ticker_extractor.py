@@ -54,6 +54,14 @@ CRYPTO_TICKERS: frozenset[str] = frozenset({
     "BTC", "ETH", "SOL", "XRP", "ADA", "DOGE", "DOT", "AVAX", "LINK",
     "MATIC", "LTC", "BCH", "SHIB", "TRX", "UNI", "ATOM", "XLM", "ETC",
     "NEAR", "APT", "ARB", "OP", "PEPE", "USDT", "USDC", "BNB",
+    "AAVE", "TAO",
+})
+
+# Market-index tickers. Like crypto, these are heavily discussed on social feeds
+# but are not listed securities, so they'd be stripped by a listed-only check.
+# Kept small and unambiguous; extend as needed (NDX, DJI, RUT, …).
+INDEX_TICKERS: frozenset[str] = frozenset({
+    "SPX", "VIX",
 })
 
 # ---------------------------------------------------------------------------

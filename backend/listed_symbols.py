@@ -144,11 +144,11 @@ async def load_valid_tickers(*, session: Any = None, force: bool = False) -> set
     """
     The full real-ticker validation universe used to gate social cashtags:
     all US-listed symbols (Nasdaq directory) ∪ SEC's company_tickers.json ∪ the
-    major-crypto allowlist. Returns an empty set only if *every* source failed —
-    callers treat empty as "no universe / do not gate" so a transient outage never
-    strips all tickers.
+    major-crypto and market-index allowlists. Returns an empty set only if *every*
+    listed source failed — callers treat empty as "no universe / do not gate" so a
+    transient outage never strips all tickers.
     """
-    from ticker_extractor import CRYPTO_TICKERS
+    from ticker_extractor import CRYPTO_TICKERS, INDEX_TICKERS
 
     listed = await load_listed_symbols(session=session, force=force)
 
@@ -161,4 +161,4 @@ async def load_valid_tickers(*, session: Any = None, force: bool = False) -> set
 
     if not listed and not sec:
         return set()  # fail open — no universe
-    return listed | sec | set(CRYPTO_TICKERS)
+    return listed | sec | set(CRYPTO_TICKERS) | set(INDEX_TICKERS)
