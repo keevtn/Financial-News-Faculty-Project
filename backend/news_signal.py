@@ -431,7 +431,8 @@ async def fetch_ticker_news(
     title, because halt items (title = symbol) often carry no ticker tags.
     Returns {ticker: [docs]}; never raises (-> {} on failure).
     """
-    syms = [t.strip().upper() for t in dict.fromkeys(tickers or []) if t and t.strip()]
+    syms = list(dict.fromkeys(
+        t.strip().upper() for t in (tickers or []) if t and t.strip()))
     if collection is None or not syms:
         return {}
     now = now or datetime.now(tz=timezone.utc)

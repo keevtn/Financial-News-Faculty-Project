@@ -322,22 +322,38 @@ async def rank_squeezes(
     from market_screener import fetch_screener, fetch_short_metrics
     from social_search import gather_social
 
+    # Redis hot layer (Phase 3): read-through TTL caches for the slow sources.
+    # Best-effort by construction — no REDIS_URI, a dead endpoint, or a missing
+    # module all degrade to today's direct calls.
+    try:
+        from squeeze_cache import (cached_short_metrics, cached_social,
+                                   cached_ticker_news)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("squeeze cache unavailable (%s) — direct fetches", type(exc).__name__)
+
+        async def cached_short_metrics(ts, fn, **kw):  # type: ignore[no-redef]
+            return await fn(ts)
+        cached_social = cached_ticker_news = cached_short_metrics  # type: ignore
+
     # 1) Universe: Yahoo most-shorted screen, plus any caller-supplied names.
     if universe is None:
         screen = await fetch_screener(preset="most_shorted", limit=40)
         universe = [r["ticker"] for r in screen.get("rows", [])]
     universe = [t for t in dict.fromkeys((universe or []) + list(extra_tickers or [])) if t]
 
-    # 2) Fuel: short metrics; keep only genuinely shorted names, cap the set so
-    #    the social burst stays small.
-    shorts = await fetch_short_metrics(universe)
+    # 2) Fuel: short metrics (12h Redis TTL — yfinance's serial lookups are the
+    #    slowest part of a run); keep only genuinely shorted names, cap the set
+    #    so the social burst stays small.
+    shorts = await cached_short_metrics(universe, fetch_short_metrics)
     fueled = [t for t in universe if (shorts.get(t, {}).get("short_pct_float") or 0) >= min_short_float]
     fueled.sort(key=lambda t: shorts[t].get("short_pct_float") or 0.0, reverse=True)
     fueled = fueled[:max_fueled]
 
     # 3) Ignition: per-ticker social snapshot + gossip mention velocity (the
     #    acceleration term, from the stored social stream when available).
-    social = await gather_social(fueled, bluesky_limit=social_limit) if fueled else {}
+    social = (await cached_social(
+        fueled, lambda ts: gather_social(ts, bluesky_limit=social_limit))
+        if fueled else {})
     velocities: dict[str, float] = {}
     if fueled and social_collection is not None:
         try:
@@ -362,7 +378,8 @@ async def rank_squeezes(
     if fueled and social_collection is not None:
         try:
             from news_signal import evaluate_ticker_news, fetch_ticker_news
-            per_ticker = await fetch_ticker_news(social_collection, fueled, now=now)
+            per_ticker = await cached_ticker_news(
+                fueled, lambda ts: fetch_ticker_news(social_collection, ts, now=now))
             news_map = {t: evaluate_ticker_news(per_ticker.get(t, []), t, now=now)
                         for t in fueled}
         except Exception as exc:  # noqa: BLE001
