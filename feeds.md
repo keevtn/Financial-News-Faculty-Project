@@ -33,6 +33,23 @@ Polled by `backend/IngestionModule.py` → `RSSExtractor`, `SECExtractor`, `FDAE
 | Business Wire | https://feed.businesswire.com/rss/home/?rss=G1&rssid=1 | All |
 | Benzinga | https://www.benzinga.com/feed | Equities, Analysis |
 | GlobeNewswire (Public Companies) | https://www.globenewswire.com/RssFeed/orgclass/1/... | Press Releases, Small/Mid-cap |
+| MarketWatch Real-time Headlines | https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines | Equities (intraday, faster than Top Stories) |
+| MarketWatch Bulletins | https://feeds.content.dowjones.io/public/rss/mw_bulletins | Market-moving one-liners |
+| Investing.com News | https://www.investing.com/rss/news.rss | Analyst ratings, company news, macro |
+| DOJ Press Releases | https://www.justice.gov/news/rss?type=press_release&m=1 | Indictments, merger suits, enforcement |
+| Stock Titan | https://www.stocktitan.net/rss | Ticker-tagged wire aggregate (incl. ACCESSWIRE reach) |
+| Nasdaq Trade Halts | https://www.nasdaqtrader.com/rss.aspx?feed=tradehalts | Halt/resume events w/ reason codes (T1/T12/H11) |
+| Nasdaq Markets | https://www.nasdaq.com/feed/rssoutbound?category=Markets | Equities |
+| Nasdaq IPOs | https://www.nasdaq.com/feed/rssoutbound?category=IPOs | New listings / pricings |
+| FierceBiotech | https://www.fiercebiotech.com/rss/xml | Trial readouts, FDA catalysts |
+| FiercePharma | https://www.fiercepharma.com/rss/xml | Pharma commercial / regulatory |
+| Endpoints News | https://endpoints.news/feed | Biotech / FDA catalysts |
+| BioPharma Dive | https://www.biopharmadive.com/feeds/news/ | Biotech / pharma industry |
+
+The 12 feeds from "MarketWatch Real-time Headlines" down were added and verified
+live (HTTP 200, RSS/XML content type) on 2026-07-05. Probed but excluded:
+Treasury press RSS (dead — redirects to the OFAC homepage), CNBC Earnings feed
+(empty response), Business Insider Markets (unverifiable).
 
 > **ACCESSWIRE / ACCESS Newswire — not ingestable.** Their domains sit behind a
 > Cloudflare bot challenge that returns `403 "Just a moment..."` to any
@@ -129,46 +146,4 @@ Defined in `IngestionModule.py` → `STOCKTWITS_WATCHLIST`.
 | Financials | JPM, BAC |
 | Energy | XOM, CVX |
 | Technology / Semiconductors | AMD, INTC |
-| Bonds / Macro proxies | TLT, GLD |
-| Crypto | BTC.X, ETH.X |
-| High-sentiment / retail | GME, AMC, PLTR |
-
-> StockTwits users self-tag messages as bullish or bearish — this provides
-> human-labeled sentiment alongside our FinBERT scores.
-
----
-
-### Bluesky — Keyword / Hashtag Search
-
-Consumed via the AT Protocol AppView API (no credentials):
-`https://api.bsky.app`
-
-No API key required. Searches run via `app.bsky.feed.searchPosts`.
-
-> **Endpoint note:** as of mid-2026 the *public* AppView host
-> (`public.api.bsky.app`) returns `403` for `searchPosts` (an anti-scraping
-> change), while the main AppView host `api.bsky.app` still serves the same
-> search unauthenticated. The extractor points at `api.bsky.app`.
-Defined in `IngestionModule.py` → `BLUESKY_SEARCH_TERMS`.
-
-| Category | Terms |
-|---|---|
-| Equities & market | #stocks, #investing, #stockmarket, #wallstreetbets, #earnings, #trading, #options, #ipo, #merger |
-| Macro | #economy, #inflation, #federalreserve, #gdp, #cpi |
-| Crypto | #crypto, #bitcoin, #ethereum, #defi |
-| Commodities / Energy | #gold, #oil, #commodities |
-| Bonds | #bonds, #treasury |
-| Tech / Sector | #fintech, #semiconductor, #ai |
-
----
-
-## Summary
-
-| Source | Count | Credentials Required | Status |
-|---|---|---|---|
-| RSS Newswires | 15 feeds | None | Live |
-| SEC EDGAR | 5 filing types | None | Live |
-| FDA | 3 endpoints | None | Live |
-| Reddit (RSS) | 11 subreddits | None | Live |
-| StockTwits | 22 tickers | n/a | Disabled, need to gain access |
-| Bluesky | 27 search terms | None | Live (RUN_SOCIAL) |
+| Bonds / Macro proxies | TLT, GLD

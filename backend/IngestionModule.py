@@ -376,6 +376,23 @@ DEFAULT_RSS_FEEDS: list[dict[str, str]] = [
         "label": "Seeking Alpha Market News",
         "url": "https://seekingalpha.com/market_currents.xml",
     },
+    {
+        # Dow Jones public feed - fires intraday as headlines break, well
+        # before topstories rotates. Verified live 2026-07-05.
+        "label": "MarketWatch Real-time Headlines",
+        "url": "https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines",
+    },
+    {
+        # Terse market-moving one-liners (halts, M&A flashes, macro prints).
+        "label": "MarketWatch Bulletins",
+        "url": "https://feeds.content.dowjones.io/public/rss/mw_bulletins",
+    },
+    {
+        # High-volume: analyst ratings, company news, macro. Verified live
+        # 2026-07-05 (analyst actions appear within minutes).
+        "label": "Investing.com News",
+        "url": "https://www.investing.com/rss/news.rss",
+    },
     # ── Macro / economic data (primary government sources) ───────────────────
     {
         "label": "Federal Reserve Press Releases",
@@ -401,6 +418,12 @@ DEFAULT_RSS_FEEDS: list[dict[str, str]] = [
     {
         "label": "FTC Press Releases",  # antitrust / merger challenges
         "url": "https://www.ftc.gov/feeds/press-release.xml",
+    },
+    {
+        # Indictments, merger suits, FCPA settlements - frequent single-name
+        # catalysts. Verified live 2026-07-05.
+        "label": "DOJ Press Releases",
+        "url": "https://www.justice.gov/news/rss?type=press_release&m=1",
     },
     # ── Crypto / digital assets ──────────────────────────────────────────────
     {
@@ -435,6 +458,50 @@ DEFAULT_RSS_FEEDS: list[dict[str, str]] = [
             "https://www.globenewswire.com/RssFeed/orgclass/1/"
             "feedTitle/GlobeNewswire%20-%20News%20about%20Public%20Companies"
         ),
+    },
+    {
+        # Aggregates BusinessWire/GlobeNewswire/ACCESSWIRE press releases with
+        # ticker tags - partially recovers ACCESSWIRE coverage (see NOTE below)
+        # through a fetchable aggregator. Verified live 2026-07-05.
+        "label": "Stock Titan",
+        "url": "https://www.stocktitan.net/rss",
+    },
+    # ── Exchange operations (market-structure catalysts) ─────────────────────
+    {
+        # Ticker-level halt/resume events with reason codes (T1 news pending,
+        # T12 info requested, H11 regulatory). A T12/H11 halt is itself a
+        # catalyst; item titles are bare symbols. Verified live 2026-07-05.
+        "label": "Nasdaq Trade Halts",
+        "url": "https://www.nasdaqtrader.com/rss.aspx?feed=tradehalts",
+    },
+    {
+        "label": "Nasdaq Markets",
+        "url": "https://www.nasdaq.com/feed/rssoutbound?category=Markets",
+    },
+    {
+        # New listings / pricing - fresh-ticker catalysts the general wires
+        # cover late. Verified live 2026-07-05.
+        "label": "Nasdaq IPOs",
+        "url": "https://www.nasdaq.com/feed/rssoutbound?category=IPOs",
+    },
+    # ── Biotech / pharma verticals (FDA-catalyst depth) ──────────────────────
+    # Trade press breaks trial readouts, CRLs, and approval odds context the
+    # FDA's own feeds lack. All four verified live 2026-07-05.
+    {
+        "label": "FierceBiotech",
+        "url": "https://www.fiercebiotech.com/rss/xml",
+    },
+    {
+        "label": "FiercePharma",
+        "url": "https://www.fiercepharma.com/rss/xml",
+    },
+    {
+        "label": "Endpoints News",
+        "url": "https://endpoints.news/feed",
+    },
+    {
+        "label": "BioPharma Dive",
+        "url": "https://www.biopharmadive.com/feeds/news/",
     },
     # NOTE: ACCESSWIRE / ACCESS Newswire is intentionally NOT listed. Their site
     # (accesswire.com / accessnewswire.com) sits behind a Cloudflare bot
@@ -1139,10 +1206,18 @@ class IngestionAgent:
             # "Apple" or "Pfizer" don't appear in FILTER_KEYWORDS.
             is_regulatory = item.source_type in ("sec", "fda")
             if is_regulatory or self._filter.accepts(item):
+                # Only social items (Reddit RSS feeds carry source_type="social")
+                # get their cashtags gated against the real-ticker universe —
+                # that's where fake $YOLO/$MOON symbols come from. Structured
+                # RSS/SEC/FDA keep un-gated extraction.
                 item = replace(
                     item,
                     topic=self._classifier.classify(item),
-                    tickers=self._ticker_extractor.extract(item.title, item.description),
+                    tickers=self._ticker_extractor.extract(
+                        item.title,
+                        item.description,
+                        validate=(item.source_type == "social"),
+                    ),
                 )
                 await self.dispatcher.dispatch(item)
             else:
@@ -1153,8 +1228,35 @@ class IngestionAgent:
     #  Lifecycle                                                           #
     # ------------------------------------------------------------------ #
 
+    async def _install_ticker_universe(self) -> None:
+        """
+        Load the real-ticker universe (all US-listed symbols + SEC + major crypto)
+        and install it on the extractor so social cashtags can be validated against
+        it. Best effort: on a fetch failure the universe stays unset and social
+        extraction falls back to un-gated behavior rather than dropping every ticker.
+        """
+        try:
+            from listed_symbols import load_valid_tickers
+            universe = await load_valid_tickers()
+            if universe:
+                self._ticker_extractor.set_valid_tickers(universe)
+                log.info(
+                    "social ticker validation ON — %d real symbols in universe",
+                    len(universe),
+                )
+            else:
+                log.warning(
+                    "ticker universe empty — social cashtag validation disabled this run"
+                )
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "ticker universe load failed (%s) — social validation disabled",
+                type(exc).__name__,
+            )
+
     async def start(self) -> None:
         """Launch enabled extractors and the dispatch loop as background tasks."""
+        await self._install_ticker_universe()
         loop = asyncio.get_running_loop()
         self._tasks = []
         if self.rss is not None:
@@ -1292,47 +1394,3 @@ class CSVHandler:
             })
 
 
-# ---------------------------------------------------------------------------
-# Default handler (stdout logging) — useful for dev/testing
-# ---------------------------------------------------------------------------
-
-async def log_handler(item: NewsItem) -> None:
-    """Print every item to stdout; replace or supplement with your own handler."""
-    print(item)
-    print()
-
-
-# ---------------------------------------------------------------------------
-# Entry-point
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    import argparse
-    import sys
-
-    p = argparse.ArgumentParser(description="Financial news ingestion agent")
-    p.add_argument("--rss", action="store_true", default=False, help="Enable RSS feeds")
-    p.add_argument("--sec", action="store_true", default=False, help="Enable SEC EDGAR filings")
-    p.add_argument("--fda", action="store_true", default=False, help="Enable FDA news & enforcement")
-    args = p.parse_args()
-
-    # If none specified, default to all enabled
-    any_specified = args.rss or args.sec or args.fda
-    enable_rss = args.rss if any_specified else True
-    enable_sec = args.sec if any_specified else True
-    enable_fda = args.fda if any_specified else True
-
-    agent = IngestionAgent(
-        rss_poll_interval=60,
-        sec_poll_interval=300,
-        fda_poll_interval=180,
-        enable_rss=enable_rss,
-        enable_sec=enable_sec,
-        enable_fda=enable_fda,
-    )
-    agent.dispatcher.register(log_handler)
-
-    try:
-        asyncio.run(agent.run())
-    except KeyboardInterrupt:
-        sys.exit(0)
