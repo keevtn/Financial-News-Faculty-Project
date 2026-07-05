@@ -16,8 +16,13 @@ bullish — otherwise the setup is "primed/neutral".
 Sources (all work from datacenter IPs; no token rotation):
   fuel     — yfinance short data (short % float, days-to-cover, float size)
   universe — Yahoo 'most_shorted' predefined screen (+ optional extra tickers)
-  ignition — Bluesky cashtag search via social_search.gather_social, scored
-             with the Loughran-McDonald lexicon.
+  ignition — 70% social (Bluesky cashtag search via social_search.gather_social,
+             scored with the Loughran-McDonald lexicon) blended with 30%
+             structured news (news_signal: decayed bullish catalyst score).
+  veto     — news_signal fuel veto: a dilutive offering / going concern /
+             chapter 11 inside a flat 5-trading-day window zeroes ignition and
+             flags the candidate "thesis broken" (visible, not silent).
+  halt     — Nasdaq Trade Halts flag (T1/T12/H11 …) surfaced on the candidate.
 
 Runs on its own scheduled lane (see middleware/squeeze_scheduler.py) as an
 on-demand burst over a few dozen names — never a continuous poller, so it can't
@@ -32,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import os
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -61,6 +67,17 @@ _IGNITION_W = {"volume": 0.40, "breadth": 0.20, "bullish": 0.25, "engagement": 0
                "velocity": 0.20, "search": 0.15}
 # Fuel-only floor: a primed name with zero ignition still scores this fraction.
 _IGNITION_FLOOR = 0.25
+# Ignition blend: social carries 70%, structured news 30% (initial split; to be
+# calibrated from graded runs once they accumulate). Env-tunable at call time.
+_DEFAULT_NEWS_SHARE = 0.30
+
+
+def _news_share() -> float:
+    try:
+        v = float(os.environ.get("SQUEEZE_NEWS_SHARE", _DEFAULT_NEWS_SHARE))
+    except (TypeError, ValueError):
+        return _DEFAULT_NEWS_SHARE
+    return min(max(v, 0.0), 1.0)
 
 
 def _velocity_term(velocity: Optional[float]) -> float:
@@ -177,9 +194,13 @@ class SqueezeCandidate:
     divergence: Optional[str] = None         # early / mainstream / search-led / aligned
     engagement: int = 0
     fuel_score: float = 0.0                  # 0..1
-    ignition_score: float = 0.0              # 0..1
+    ignition_score: float = 0.0              # 0..1 (post-blend, post-veto)
+    news_ignition: Optional[float] = None    # 0..1 structured-news half (None = no news data)
     squeeze_score: float = 0.0               # 0..100
     direction: str = "neutral"
+    thesis_broken: bool = False              # fuel veto fired — see ``veto``
+    veto: Optional[dict[str, Any]] = None    # {reason, headline, source, published_at, age_days}
+    halted: Optional[dict[str, Any]] = None  # {code, published_at, resumed, age_h}
     sources: list[str] = field(default_factory=list)
     components: dict[str, float] = field(default_factory=dict)
     sample_posts: list[dict[str, Any]] = field(default_factory=list)
@@ -192,11 +213,15 @@ def score_candidate(
     sentiment: float,
     velocity: Optional[float] = None,
     search_signal: Optional[dict[str, Any]] = None,
+    news: Optional[dict[str, Any]] = None,
 ) -> SqueezeCandidate:
     """Combine short fuel + social ignition into a scored squeeze candidate.
     ``velocity`` is the gossip mention-acceleration (x baseline); ``search_signal``
-    is the Trends signal ({build_velocity, clock, search_term}). Both optional ->
-    ignition falls back to whatever is present."""
+    is the Trends signal ({build_velocity, clock, search_term}). ``news`` is the
+    ``news_signal.evaluate_ticker_news`` read: when present, ignition blends
+    70% social / 30% news, a veto zeroes ignition entirely (thesis broken —
+    covering-fuel got refilled), and a halt flag rides along to the UI. All
+    optional -> ignition falls back to whatever is present."""
     spf = short.get("short_pct_float")
     sr = short.get("short_ratio")
     fl = short.get("float_shares")
@@ -213,6 +238,27 @@ def score_candidate(
     ign, ign_c = _ignition_score(focus, sentiment, engagement, velocity, search_t,
                                  breadth if social else None)
 
+    # Structured-news blend + veto/halt (graceful: news=None -> social only).
+    news_ign: Optional[float] = None
+    veto = halt = None
+    thesis_broken = False
+    if news is not None:
+        news_ign = float(news.get("news_ignition") or 0.0)
+        share = _news_share()
+        ign = (1.0 - share) * ign + share * news_ign
+        ign_c["news"] = round(news_ign, 4)
+        veto = news.get("veto")
+        halt = news.get("halt")
+        if veto is not None:
+            # Hard veto: the float just expanded / solvency is in doubt — no
+            # amount of chatter makes that a squeeze. Visible, not silent.
+            thesis_broken = True
+            ign = 0.0
+
+    direction = _direction(sentiment)
+    if thesis_broken:
+        direction = "neutral"  # never call a broken thesis "bullish"
+
     return SqueezeCandidate(
         ticker=ticker,
         short_pct_float=spf, short_ratio=sr, float_shares=fl,
@@ -224,8 +270,12 @@ def score_candidate(
         divergence=_divergence(velocity, search_vel),
         engagement=engagement,
         fuel_score=round(fuel, 4), ignition_score=round(ign, 4),
+        news_ignition=round(news_ign, 4) if news_ign is not None else None,
         squeeze_score=_squeeze_score(fuel, ign),
-        direction=_direction(sentiment),
+        direction=direction,
+        thesis_broken=thesis_broken,
+        veto=veto,
+        halted=halt,
         sources=list(social.get("sources", [])) if social else [],
         components={**fuel_c, **{f"ign_{k}": v for k, v in ign_c.items()}},
         sample_posts=list(social.get("top_posts", [])) if social else [],
@@ -306,6 +356,18 @@ async def rank_squeezes(
         except Exception as exc:  # noqa: BLE001
             log.warning("trends fetch failed (%s) — ignition uses social only", type(exc).__name__)
 
+    # Structured news: ignition boost + fuel veto + halt flag per fueled name
+    # (news lives in the same collection as social; one read-only query).
+    news_map: dict[str, dict[str, Any]] = {}
+    if fueled and social_collection is not None:
+        try:
+            from news_signal import evaluate_ticker_news, fetch_ticker_news
+            per_ticker = await fetch_ticker_news(social_collection, fueled, now=now)
+            news_map = {t: evaluate_ticker_news(per_ticker.get(t, []), t, now=now)
+                        for t in fueled}
+        except Exception as exc:  # noqa: BLE001
+            log.warning("news signal failed (%s) — ignition uses social only", type(exc).__name__)
+
     # 4) Sentiment + score.
     try:
         from sentiment import LoughranMcDonaldAnalyzer
@@ -319,7 +381,8 @@ async def rank_squeezes(
         s = social.get(t)
         sentiment = _social_sentiment(analyzer, s.get("texts", [])) if s else 0.0
         candidates.append(score_candidate(
-            t, shorts.get(t, {}), s, sentiment, velocities.get(t), trends_signals.get(t)))
+            t, shorts.get(t, {}), s, sentiment, velocities.get(t),
+            trends_signals.get(t), news_map.get(t)))
 
     candidates.sort(key=lambda c: c.squeeze_score, reverse=True)
     items = [asdict(c) for c in candidates[:top_k]]

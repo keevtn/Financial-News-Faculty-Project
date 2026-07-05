@@ -27,3 +27,4 @@ node_modules/
 backend/tests/test_catalyst_scenarios.py
 backend/tests/test_catalyst_calibration.py
 backend/tests/test_sentiment.py
+backend/tests/test_squeeze_scenarios.py

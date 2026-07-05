@@ -33,6 +33,8 @@ from catalyst_backtest import _spearman
 SQUEEZE_SIGNALS = [
     "squeeze_score", "fuel_score", "ignition_score", "social_velocity",
     "search_velocity", "short_pct_float", "short_ratio", "focus_score",
+    "news_ignition",      # structured-news half of ignition (0..1)
+    "thesis_broken",      # fuel-veto hits (bool -> 0/1): did vetoed names really stall?
 ]
 SQUEEZE_OUTCOME = "max_gain"          # 5-session peak gain vs entry
 

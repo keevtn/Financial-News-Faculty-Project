@@ -38,6 +38,7 @@ from typing import Any, Optional
 from catalyst_backtest import DEFAULT_WEIGHTS
 from catalyst_calibration import fit_expected_move, recommend_weights
 from catalyst_scenarios import as_graded_run, run_bank, scenario_bank
+from squeeze_scenarios import run_squeeze_bank
 
 THRESHOLDS = {
     "direction_accuracy": 0.70,
@@ -70,6 +71,19 @@ def summarize(report: dict[str, Any], label: str) -> None:
             print(f"  miss {res['scenario']}: "
                   + "; ".join(f"{m['ticker']} pred={m['pred_direction']}"
                               f" true={m['true_direction']}" for m in misses))
+
+
+def summarize_squeeze(report: dict[str, Any]) -> None:
+    verdict = "PASS" if report["all_passed"] else "FAIL"
+    print(
+        f"[squeeze bank] {verdict}  scenarios={report['scenarios_passed']}"
+        f"/{report['n_scenarios']}  checks={report['checks_passed']}"
+        f"/{report['checks_total']}"
+    )
+    for res in report["results"]:
+        for c in res["checks"]:
+            if not c["ok"]:
+                print(f"  miss {res['scenario']}: {c['name']} -> {c['detail']}")
 
 
 def optimize_loop() -> tuple[dict[str, Any], Optional[dict[str, float]]]:
@@ -166,6 +180,10 @@ def main() -> None:
         summarize(report, "single pass")
         weights = None
 
+    # Squeeze bank: structural checks (veto/halt/decay/ranking), all must hold.
+    squeeze_report = run_squeeze_bank()
+    summarize_squeeze(squeeze_report)
+
     replay_result = asyncio.run(replay_mongo()) if args.replay else None
 
     if args.llm:
@@ -176,13 +194,15 @@ def main() -> None:
         )
 
     if args.save:
-        out = {"report": report, "weights": weights, "replay": replay_result,
-               "thresholds": THRESHOLDS, "passed": passes(report)}
+        out = {"report": report, "squeeze_report": squeeze_report,
+               "weights": weights, "replay": replay_result,
+               "thresholds": THRESHOLDS,
+               "passed": passes(report) and squeeze_report["all_passed"]}
         with open(args.save, "w", encoding="utf-8") as fh:
             json.dump(out, fh, indent=2, default=str)
         print(f"saved -> {args.save}")
 
-    sys.exit(0 if passes(report) else 1)
+    sys.exit(0 if passes(report) and squeeze_report["all_passed"] else 1)
 
 
 if __name__ == "__main__":

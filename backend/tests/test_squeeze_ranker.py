@@ -158,6 +158,73 @@ class TestScoreCandidate:
         assert c.breadth == 12
 
 
+class TestNewsBlend:
+    _SHORT = {"short_pct_float": 0.40, "short_ratio": 6.0, "float_shares": 30e6}
+    _SOCIAL = {"focus_score": 12.0, "engagement": 100, "n_posts": 30,
+               "sources": ["bluesky"], "top_posts": []}
+
+    @staticmethod
+    def _news(ign, veto=None, halt=None):
+        return {"news_ignition": ign, "components": {}, "veto": veto,
+                "halt": halt, "n_news": 1}
+
+    def test_no_news_is_social_only(self):
+        # backward compatible: news=None leaves ignition untouched
+        base = sq.score_candidate("ABC", self._SHORT, self._SOCIAL, 0.5)
+        assert base.news_ignition is None and base.thesis_broken is False
+
+    def test_blend_is_70_30(self):
+        base = sq.score_candidate("ABC", self._SHORT, self._SOCIAL, 0.5)
+        blended = sq.score_candidate("ABC", self._SHORT, self._SOCIAL, 0.5,
+                                     news=self._news(1.0))
+        expect = 0.70 * base.ignition_score + 0.30 * 1.0
+        assert abs(blended.ignition_score - round(expect, 4)) < 1e-3
+        assert blended.news_ignition == 1.0
+        assert blended.components["ign_news"] == 1.0
+
+    def test_news_share_env_tunable(self, monkeypatch):
+        monkeypatch.setenv("SQUEEZE_NEWS_SHARE", "0.5")
+        c = sq.score_candidate("ABC", self._SHORT, None, 0.0, news=self._news(1.0))
+        assert abs(c.ignition_score - 0.5) < 1e-9   # 0.5*0 + 0.5*1
+
+    def test_news_ignites_quiet_name(self):
+        quiet = sq.score_candidate("ABC", self._SHORT, None, 0.0,
+                                   news=self._news(0.0))
+        ignited = sq.score_candidate("ABC", self._SHORT, None, 0.0,
+                                     news=self._news(0.8))
+        assert ignited.squeeze_score > quiet.squeeze_score
+        assert ignited.direction == "neutral"       # news boosts score, social calls direction
+
+    def test_veto_zeroes_ignition_and_flags(self):
+        veto = {"reason": "dilutive_offering", "headline": "offering",
+                "source": "GlobeNewswire", "published_at": None, "age_days": 1.0}
+        c = sq.score_candidate("ABC", self._SHORT, self._SOCIAL, 0.8,
+                               news=self._news(0.9, veto=veto))
+        assert c.thesis_broken is True
+        assert c.ignition_score == 0.0
+        assert c.direction == "neutral"             # never bullish on a broken thesis
+        assert c.veto["reason"] == "dilutive_offering"
+        # score collapses to the fuel floor - primed, not firing
+        floor = sq.score_candidate("ABC", self._SHORT, None, 0.0)
+        assert abs(c.squeeze_score - floor.squeeze_score) < 1e-9
+
+    def test_vetoed_hot_name_ranks_below_clean_hot_name(self):
+        veto = {"reason": "dilutive_offering", "headline": "x", "source": "y",
+                "published_at": None, "age_days": 0.5}
+        vetoed = sq.score_candidate("BAD", self._SHORT, self._SOCIAL, 0.8,
+                                    news=self._news(0.9, veto=veto))
+        clean = sq.score_candidate("OK", self._SHORT, self._SOCIAL, 0.8,
+                                   news=self._news(0.0))
+        assert vetoed.squeeze_score < clean.squeeze_score
+
+    def test_halt_flag_rides_along(self):
+        halt = {"code": "T1", "published_at": None, "resumed": False, "age_h": 1.0}
+        c = sq.score_candidate("ABC", self._SHORT, self._SOCIAL, 0.2,
+                               news=self._news(0.3, halt=halt))
+        assert c.halted["code"] == "T1"
+        assert c.thesis_broken is False              # a halt flags, it doesn't veto
+
+
 class TestGradeSqueeze:
     _RESULT = {"items": [{"ticker": "A", "rank": 1}, {"ticker": "B", "rank": 2}]}
 
