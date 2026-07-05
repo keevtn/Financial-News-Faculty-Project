@@ -8,6 +8,7 @@ interface FilterSidebarProps {
   filters: FilterState;
   onChange: (f: FilterState) => void;
   tickerCounts: Map<string, number>;
+  sourceCounts: Map<string, number>;
 }
 
 const TOPIC_COLORS: Record<string, string> = {
@@ -82,11 +83,95 @@ function FilterRow({
 
 const MAX_LIMIT = 500;
 
-export default function FilterSidebar({ filters, onChange, tickerCounts }: FilterSidebarProps) {
-  const sortedTickers = Array.from(tickerCounts.entries()).sort(
-    (a, b) => b[1] - a[1] || a[0].localeCompare(b[0])
-  );
+/**
+ * Compact multi-select: a fixed-height scroll box with a mini search input,
+ * so long lists (48 feeds, dozens of tickers) never blow up sidebar height.
+ * Empty selection means "no filter" (show everything).
+ */
+function ScrollBoxSection({
+  label,
+  counts,
+  selected,
+  onToggle,
+  onClear,
+  renderName,
+  searchPlaceholder,
+  emptyText,
+}: {
+  label: string;
+  counts: Map<string, number>;
+  selected: Set<string>;
+  onToggle: (value: string) => void;
+  onClear: () => void;
+  renderName: (name: string) => React.ReactNode;
+  searchPlaceholder: string;
+  emptyText: string;
+}) {
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const entries = Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .filter(([name]) => !q || name.toLowerCase().includes(q));
 
+  return (
+    <div className="mb-5">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">
+          {label}
+          {selected.size > 0 && (
+            <span className="ml-1.5 text-[#00d4aa] normal-case tracking-normal">
+              ({selected.size})
+            </span>
+          )}
+        </p>
+        {selected.size > 0 && (
+          <button
+            onClick={onClear}
+            className="text-[10px] text-slate-400 hover:text-[#00d4aa] transition-colors shrink-0"
+          >
+            clear
+          </button>
+        )}
+      </div>
+      <input
+        type="text"
+        aria-label={`Filter ${label.toLowerCase()} list`}
+        placeholder={searchPlaceholder}
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        className="w-full mb-1.5 bg-[#0f1629] border border-[#1e2d4a] rounded px-2 py-1 text-[11px] text-slate-300 placeholder-slate-500 focus:outline-none focus:border-[#00d4aa] transition-colors"
+      />
+      <div className="max-h-36 overflow-y-auto scrollbar-thin border border-[#1e2d4a] rounded bg-[#0f1629]/50 px-2 py-1.5 space-y-1">
+        {counts.size === 0 ? (
+          <p className="text-[10px] text-slate-400 italic">{emptyText}</p>
+        ) : entries.length === 0 ? (
+          <p className="text-[10px] text-slate-400 italic">No match for “{query}”</p>
+        ) : (
+          entries.map(([name, count]) => (
+            <FilterRow
+              key={name}
+              checked={selected.has(name)}
+              onChange={() => onToggle(name)}
+              label={
+                <span className="flex items-center gap-1.5 min-w-0">
+                  {renderName(name)}
+                  <span className="text-slate-400 text-[10px] shrink-0">({count})</span>
+                </span>
+              }
+            />
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default function FilterSidebar({
+  filters,
+  onChange,
+  tickerCounts,
+  sourceCounts,
+}: FilterSidebarProps) {
   const [pendingLimit, setPendingLimit] = useState(String(filters.limit ?? 100));
 
   // Sync input when filters are reset externally (e.g. "Reset all filters").
@@ -226,35 +311,35 @@ export default function FilterSidebar({ filters, onChange, tickerCounts }: Filte
         })}
       </Section>
 
-      <Section label="Tickers">
-        {sortedTickers.length === 0 ? (
-          <p className="text-[10px] text-slate-400 italic">No tickers detected</p>
-        ) : (
-          sortedTickers.map(([ticker, count]) => (
-            <FilterRow
-              key={ticker}
-              checked={filters.tickers.has(ticker)}
-              onChange={() =>
-                onChange({ ...filters, tickers: toggle(filters.tickers, ticker) })
-              }
-              label={
-                <span className="flex items-center gap-1.5">
-                  <span className="font-mono text-sky-400 text-[10px]">{ticker}</span>
-                  <span className="text-slate-400 text-[10px]">({count})</span>
-                </span>
-              }
-            />
-          ))
+      <ScrollBoxSection
+        label="Feeds"
+        counts={sourceCounts}
+        selected={filters.sources}
+        onToggle={(name) =>
+          onChange({ ...filters, sources: toggle(filters.sources, name) })
+        }
+        onClear={() => onChange({ ...filters, sources: new Set() })}
+        renderName={(name) => (
+          <span className="text-slate-300 text-[11px] truncate">{name}</span>
         )}
-        {filters.tickers.size > 0 && (
-          <button
-            onClick={() => onChange({ ...filters, tickers: new Set() })}
-            className="text-[10px] text-slate-400 hover:text-[#00d4aa] transition-colors pt-1"
-          >
-            Clear ticker filter
-          </button>
+        searchPlaceholder="Find feed…"
+        emptyText="No feeds loaded"
+      />
+
+      <ScrollBoxSection
+        label="Tickers"
+        counts={tickerCounts}
+        selected={filters.tickers}
+        onToggle={(name) =>
+          onChange({ ...filters, tickers: toggle(filters.tickers, name) })
+        }
+        onClear={() => onChange({ ...filters, tickers: new Set() })}
+        renderName={(name) => (
+          <span className="font-mono text-sky-400 text-[10px]">{name}</span>
         )}
-      </Section>
+        searchPlaceholder="Find ticker…"
+        emptyText="No tickers detected"
+      />
 
       <button
         onClick={() =>
@@ -262,6 +347,7 @@ export default function FilterSidebar({ filters, onChange, tickerCounts }: Filte
             topics: new Set(ALL_TOPICS),
             sourceTypes: new Set(STRUCTURED_SOURCE_TYPES),
             sentiments: new Set(ALL_SENTIMENTS),
+            sources: new Set(),
             tickers: new Set(),
             search: "",
             sortBy: "latest",

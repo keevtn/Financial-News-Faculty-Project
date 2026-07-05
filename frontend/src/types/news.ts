@@ -51,6 +51,8 @@ export interface FilterState {
   topics: Set<string>;
   sourceTypes: Set<SourceType>;
   sentiments: Set<SentimentLabel>;
+  /** Feed labels (NewsItem.source) to include; empty set = all feeds. */
+  sources: Set<string>;
   tickers: Set<string>;
   search: string;
   sortBy: SortBy;

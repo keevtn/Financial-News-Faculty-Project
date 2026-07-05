@@ -22,6 +22,7 @@ const DEFAULT_FILTERS: FilterState = {
   topics: new Set(ALL_TOPICS),
   sourceTypes: new Set(STRUCTURED_SOURCE_TYPES),
   sentiments: new Set(ALL_SENTIMENTS),
+  sources: new Set(),   // empty = all feeds
   tickers: new Set(),
   search: "",
   sortBy: "latest",
@@ -223,27 +224,43 @@ export default function HomePage() {
     return result;
   }, [structuredItems, filters]);
 
-  // Count how many pre-filtered structured items each ticker appears in.
-  const tickerCounts = useMemo(() => {
+  // Count items per feed label BEFORE the feed filter is applied, so the
+  // feed box always shows every available feed with stable counts.
+  const sourceCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const item of preTickerFiltered) {
+      counts.set(item.source, (counts.get(item.source) ?? 0) + 1);
+    }
+    return counts;
+  }, [preTickerFiltered]);
+
+  // Feed filter stage: empty selection = all feeds.
+  const sourceFiltered = useMemo(() => {
+    if (filters.sources.size === 0) return preTickerFiltered;
+    return preTickerFiltered.filter((item) => filters.sources.has(item.source));
+  }, [preTickerFiltered, filters.sources]);
+
+  // Ticker counts AFTER the feed filter, so they match what's on screen.
+  const tickerCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of sourceFiltered) {
       for (const ticker of item.tickers ?? []) {
         counts.set(ticker, (counts.get(ticker) ?? 0) + 1);
       }
     }
     return counts;
-  }, [preTickerFiltered]);
+  }, [sourceFiltered]);
 
   // Apply ticker filter then limit last so counts above stay accurate.
   const filtered = useMemo(() => {
-    let result = preTickerFiltered;
+    let result = sourceFiltered;
     if (filters.tickers.size > 0) {
       result = result.filter((item) =>
         item.tickers?.some((t) => filters.tickers.has(t))
       );
     }
     return filters.limit !== null ? result.slice(0, filters.limit) : result;
-  }, [preTickerFiltered, filters.tickers, filters.limit]);
+  }, [sourceFiltered, filters.tickers, filters.limit]);
 
   // ── Social pipeline: three-stage filter ──────────────────────────────────
 
@@ -309,7 +326,12 @@ export default function HomePage() {
         <>
           <StatsBar items={filtered} />
           <div className="flex flex-1 overflow-hidden">
-            <FilterSidebar filters={filters} onChange={setFilters} tickerCounts={tickerCounts} />
+            <FilterSidebar
+              filters={filters}
+              onChange={setFilters}
+              tickerCounts={tickerCounts}
+              sourceCounts={sourceCounts}
+            />
             <NewsFeed items={filtered} scoringPending={scoringPending} />
           </div>
         </>
