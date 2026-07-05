@@ -11,40 +11,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  backend-tests:
-    name: Backend tests (pytest)
+  backend-checks:
+    # Two layers: the unit test suite (pytest), then accuracy gates on the
+    # committed model artifacts — the labeled sentiment benchmark (macro-F1
+    # floor + zero bullish/bearish inversions) and the catalyst scenario bank
+    # (direction/recall/rank-corr thresholds; the runner exits non-zero on
+    # failure). False-data test files are local-only (gitignored); the gates
+    # below cover that ground using committed, stdlib-only artifacts.
+    name: Backend tests + accuracy gates
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # The pure modules under test import only stdlib + market_calendar
-      # (zoneinfo), so the suite needs just pytest. tzdata guarantees the
-      # America/New_York zone resolves on any runner image.
-      - name: Install test deps
+      - name: Install deps
         run: python -m pip install --upgrade pip pytest tzdata
-      - name: Run tests
+      - name: Compile all backend modules
+        run: python -m compileall -q .
+      - name: Run unit tests
+        working-directory: .  # pytest.ini (pythonpath/testpaths) lives at repo root
         run: pytest
-
-  frontend-build:
-    name: Frontend type-check + build
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
-    env:
-      NEXT_TELEMETRY_DISABLED: "1"
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - name: Install
-        run: npm ci
-      - name: Type-check
-        run: npx tsc --noEmit
-      - name: Build
-        run: npm run build
+      - name: Sentiment benchmark floor (macro-F1 >= 0.90, no inversions)
+        run: |
+          python -

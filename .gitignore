@@ -22,5 +22,8 @@ __pycache__/
 node_modules/
 .next/
 
-# Test suites — local-only, not tracked on GitHub
-backend/tests/
+# False-data test suites (synthetic scenario/benchmark fixtures) - local-only.
+# The long-standing unit test suite stays tracked; CI runs it.
+backend/tests/test_catalyst_scenarios.py
+backend/tests/test_catalyst_calibration.py
+backend/tests/test_sentiment.py
