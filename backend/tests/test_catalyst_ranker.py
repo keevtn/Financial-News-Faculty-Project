@@ -127,6 +127,57 @@ def test_build_candidates_aggregates_features():
     assert abs(c.abnormal_attention - 2.0) < 1e-9   # 2 docs / baseline 1.0
 
 
+# --- prominence (headline vs incidental mention) ---------------------------- #
+
+class _TitleAwareExtractor:
+    """Extracts ACME from anywhere, PEER only where it's actually written."""
+    def extract(self, title, description):
+        text = f"{title} {description}".lower()
+        out = []
+        if "acme" in text:
+            out.append("ACME")
+        if "peer" in text:
+            out.append("PEER")
+        return tuple(out)
+
+
+class TestProminence:
+    def test_factor_bounds(self):
+        assert cr._prominence_factor(None) == 1.0    # unknown -> neutral
+        assert cr._prominence_factor(0.0) == 0.7     # never in a headline
+        assert cr._prominence_factor(1.0) == 1.0
+        assert cr._prominence_factor(0.5) == 0.85
+
+    def test_title_mention_share_computed(self):
+        docs = [
+            {"title": "Acme wins approval", "description": "PEER also trades",
+             "source": "A", "source_type": "rss", "content_hash": "h1"},
+            {"title": "Acme up big", "description": "watchers cite peer weakness",
+             "source": "B", "source_type": "rss", "content_hash": "h2"},
+        ]
+        cands = {c.ticker: c for c in cr.build_candidates(
+            docs, baseline_daily={}, ticker_extractor=_TitleAwareExtractor())}
+        assert cands["ACME"].title_mention_share == 1.0   # headline subject
+        assert cands["PEER"].title_mention_share == 0.0   # body-only mention
+
+    def test_incidental_mention_scored_lower(self):
+        subject = _cand(ticker="SUBJ", title_mention_share=1.0)
+        incidental = _cand(ticker="INCD", title_mention_share=0.0)
+        out = {c.ticker: c for c in cr.score_candidates([subject, incidental],
+                                                        min_sources=2)}
+        assert abs(out["INCD"].pre_score - out["SUBJ"].pre_score * 0.7) < 0.05
+        assert out["INCD"].components["prominence_factor"] == 0.7
+        assert out["SUBJ"].components["prominence_factor"] == 1.0
+
+    def test_no_extractor_is_neutral(self):
+        docs = [{"title": "Acme wins", "description": "", "tickers": ["ACME"],
+                 "source": "A", "source_type": "rss", "content_hash": "h1"}]
+        c = cr.build_candidates(docs, baseline_daily={})[0]
+        assert c.title_mention_share is None
+        scored = cr.score_candidates([_cand(ticker="X")], min_sources=2)[0]
+        assert scored.components["prominence_factor"] == 1.0
+
+
 # --- scoring --------------------------------------------------------------- #
 
 class TestScoreCandidates:

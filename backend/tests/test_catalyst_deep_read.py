@@ -78,6 +78,51 @@ class TestBuildStoryClusters:
         assert clusters and clusters[0]["candidates"] == ["ACME"]
 
 
+class TestCrossSourceMerge:
+    def _ts(self, hour):
+        return datetime(2026, 6, 30, hour, 0, tzinfo=timezone.utc)
+
+    def _pair(self, gap_hours):
+        filing = {**_doc("8-K - ACME CORP (0001326200) (Filer)", tickers=("ACME",),
+                         source="SEC EDGAR — 8-K", source_type="sec",
+                         content_hash="h-8k"), "published_at": self._ts(2)}
+        pr = {**_doc("Acme Announces Definitive Merger Agreement with Widget Co",
+                     tickers=("ACME",), source="PRNewswire", content_hash="h-pr"),
+              "published_at": self._ts(2 + gap_hours)}
+        return [filing, pr]
+
+    def test_filing_folds_into_wire_cluster(self):
+        clusters = dr.build_story_clusters(self._pair(gap_hours=1), {"ACME"})
+        assert len(clusters) == 1                      # one event, one deep read
+        types = {m["source_type"] for m in clusters[0]["members"]}
+        assert types == {"sec", "rss"}
+
+    def test_no_merge_outside_time_window(self):
+        clusters = dr.build_story_clusters(self._pair(gap_hours=10), {"ACME"})
+        assert len(clusters) == 2
+
+    def test_no_merge_across_tickers(self):
+        docs = self._pair(gap_hours=1)
+        docs[1]["_x"] = 1  # distinct dicts already; retag the PR to another name
+        docs[1]["tickers"] = ["OTHR"]
+        clusters = dr.build_story_clusters(docs, {"ACME", "OTHR"})
+        assert len(clusters) == 2
+
+    def test_undated_members_stay_separate(self):
+        docs = self._pair(gap_hours=1)
+        del docs[0]["published_at"]
+        clusters = dr.build_story_clusters(docs, {"ACME"})
+        assert len(clusters) == 2                      # conservative without dates
+
+    def test_regulatory_only_profile_unaffected(self):
+        # No narrative cluster to merge into -> all-SEC clusters pass through.
+        filing = {**_doc("8-K - ACME CORP (0001326200) (Filer)", tickers=("ACME",),
+                         source="SEC EDGAR — 8-K", source_type="sec"),
+                  "published_at": self._ts(2)}
+        clusters = dr.build_story_clusters([filing], {"ACME"})
+        assert len(clusters) == 1
+
+
 # --- input rendering ---------------------------------------------------------- #
 
 class TestRenderClusterInput:
@@ -129,6 +174,28 @@ class TestRenderClusterInput:
         assert "pre_market_confirmation=gap_up" in text
         body_line = next(l for l in text.splitlines() if l.startswith("    BODY:"))
         assert len(body_line) <= len("    BODY: ") + 500
+
+    def test_scheduled_line_renders_between_sentiment_and_candidates(self):
+        docs = [_doc("Acme reports Q2 earnings beat", tickers=("ACME",))]
+        text = dr.render_cluster_input(
+            self._cluster_of(docs), profile="combined",
+            features_by_ticker={"ACME": _feat("ACME")},
+            scheduled={"ACME": [{"event_type": "earnings",
+                                 "event_date": "2026-06-30"}]},
+        )
+        lines = text.splitlines()
+        i = lines.index("SCHEDULED: ACME earnings 2026-06-30 (on the calendar before this window)")
+        assert lines[i - 1].startswith("SENTIMENT:")
+        assert lines[i + 1].startswith("CANDIDATES:")
+
+    def test_no_scheduled_line_without_matches(self):
+        docs = [_doc("Acme surprise announcement", tickers=("ACME",))]
+        text = dr.render_cluster_input(
+            self._cluster_of(docs), profile="combined",
+            features_by_ticker={"ACME": _feat("ACME")},
+            scheduled={"OTHR": [{"event_type": "earnings", "event_date": "2026-06-30"}]},
+        )
+        assert "SCHEDULED" not in text
 
     def test_member_cap_prefers_distinct_sources(self):
         docs = [_doc("Same story headline about acme corp", tickers=("ACME",),
@@ -288,7 +355,13 @@ class TestDeepReadDegradation:
         assert out["grades"] == [] and "no story clusters" in out["status"]
 
     def test_cache_key_scoped_by_model(self):
-        assert dr._cache_key("m1", "c-abc") != dr._cache_key("m2", "c-abc")
+        assert dr._cache_key("m1", "same input") != dr._cache_key("m2", "same input")
+
+    def test_cache_key_scoped_by_rendered_input(self):
+        # A SCHEDULED line (or any input change) must re-grade, not reuse a
+        # grade computed from stale context.
+        assert dr._cache_key("m", "PROFILE: combined\nX") != dr._cache_key(
+            "m", "PROFILE: combined\nSCHEDULED: ACME earnings 2026-06-30\nX")
 
 
 # --- offline end-to-end through rank_catalysts (cluster mode, fake LLM) ------------------- #
@@ -336,7 +409,7 @@ def _window_docs():
     ]
 
 
-def _rank(monkeypatch, *, use_llm, payload=None):
+def _rank(monkeypatch, *, use_llm, payload=None, calendar=None):
     async def _empty(*a, **k):
         return {}
     monkeypatch.setattr(cr, "_fetch_premarket_safe", _empty)
@@ -355,6 +428,7 @@ def _rank(monkeypatch, *, use_llm, payload=None):
     return asyncio.run(cr.rank_catalysts(
         _FakeNewsColl(_window_docs()), use_llm=use_llm, ticker_extractor=_Ext(),
         now=datetime(2026, 6, 30, 12, 0, tzinfo=timezone.utc),
+        calendar_collection=calendar,
     ))
 
 
@@ -400,3 +474,62 @@ class TestRankCatalystsClusterMode:
         assert result["used_llm"] is False
         assert result["items"][0]["catalyst_score"] == result["items"][0]["pre_score"]
         assert result["llm_status"] == "unparseable model output"
+
+
+class _FakeCalendar:
+    """Calendar store: canned lookup docs + recorded upserts."""
+    def __init__(self, docs=None):
+        self.docs = docs or []
+        self.upserts = []
+
+    def find(self, query, projection=None):
+        coll = self
+
+        class _Cur:
+            def limit(self, n): return self
+            async def to_list(self, length=None): return coll.docs
+        return _Cur()
+
+    async def update_one(self, flt, update, upsert=False):
+        self.upserts.append(flt["_id"])
+
+    async def delete_many(self, flt):
+        pass
+
+
+class TestCalendarIntegration:
+    def test_scheduled_context_reaches_the_model(self, monkeypatch):
+        calendar = _FakeCalendar(docs=[{
+            "ticker": "ACME", "event_type": "pdufa_date",
+            "event_date": "2026-06-30", "subtype": "PDUFA",
+        }])
+        grade = {**_GRADE, "event_type": "fda_approval", "primary_ticker": "ACME",
+                 "is_priced_in": True,
+                 "affected_tickers": [{"ticker": "ACME", "role": "subject",
+                                       "direction": "bullish"}]}
+        result = _rank(monkeypatch, use_llm=True, payload=json.dumps(grade),
+                       calendar=calendar)
+        req = _fake_anthropic.last_request
+        assert "SCHEDULED: ACME pdufa_date 2026-06-30" in req["messages"][0]["content"]
+        assert result["scheduled_matches"]["ACME"][0]["event_type"] == "pdufa_date"
+        # Priced-in grade mutes the effective score (x0.5).
+        assert result["items"][0]["catalyst_score"] == round(100 * 0.9 * 0.94 * 0.5, 2)
+
+    def test_forward_grades_recorded_back(self, monkeypatch):
+        calendar = _FakeCalendar()
+        grade = {**_GRADE, "event_type": "pdufa_date", "primary_ticker": "ACME",
+                 "is_forward_looking": True, "event_date": "2026-09-15",
+                 "affected_tickers": [{"ticker": "ACME", "role": "subject",
+                                       "direction": "ambiguous"}]}
+        _rank(monkeypatch, use_llm=True, payload=json.dumps(grade), calendar=calendar)
+        assert calendar.upserts == ["ACME:pdufa_date:2026-09-15"]
+
+    def test_ipo_grade_projects_lockups(self, monkeypatch):
+        calendar = _FakeCalendar()
+        grade = {**_GRADE, "event_type": "ipo", "subtype": "priced",
+                 "primary_ticker": "ACME",
+                 "affected_tickers": [{"ticker": "ACME", "role": "subject",
+                                       "direction": "bullish"}]}
+        _rank(monkeypatch, use_llm=True, payload=json.dumps(grade), calendar=calendar)
+        assert calendar.upserts == ["ACME:lockup_expiry:2026-09-28",
+                                    "ACME:lockup_expiry:2026-12-27"]

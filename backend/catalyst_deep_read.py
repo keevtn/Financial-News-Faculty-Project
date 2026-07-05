@@ -263,10 +263,75 @@ OUTPUT:
 
 # --- Cluster construction (pure) -------------------------------------------- #
 
+# Max hours between a filing and a wire story for them to count as one event.
+_CROSS_SOURCE_MERGE_HOURS = 8.0
+_REGULATORY_TYPES = frozenset({"sec", "fda"})
+
+
 def _cluster_id(members: list[dict[str, Any]]) -> str:
     """Content-derived id, stable across runs (cache key + audit handle)."""
     keys = sorted(m.get("content_hash") or m.get("title", "") for m in members)
     return "c-" + hashlib.sha1("|".join(keys).encode()).hexdigest()[:10]
+
+
+def _published(doc: dict[str, Any]) -> Optional[Any]:
+    ts = doc.get("published_at")
+    return ts if hasattr(ts, "timestamp") else None
+
+
+def _min_gap_hours(a: list[dict[str, Any]], b: list[dict[str, Any]]) -> Optional[float]:
+    """Smallest publish-time gap between two member lists; None if undated."""
+    ta = [_published(d) for d in a]
+    tb = [_published(d) for d in b]
+    ta = [t for t in ta if t is not None]
+    tb = [t for t in tb if t is not None]
+    if not ta or not tb:
+        return None
+    return min(abs((x - y).total_seconds()) for x in ta for y in tb) / 3600.0
+
+
+def _merge_regulatory_into_narrative(
+    grouped: list[list[dict[str, Any]]],
+    *,
+    window_hours: float = _CROSS_SOURCE_MERGE_HOURS,
+) -> list[list[dict[str, Any]]]:
+    """
+    Fold all-regulatory clusters into a candidate-overlapping wire cluster.
+
+    Title clustering can't join `"8-K - ACME CORP (0001…) (Filer)"` with the PR
+    about the same event, so the filing and its press release become two
+    clusters — two paid deep reads and double-counted breadth. Merge a cluster
+    whose members are ALL sec/fda into the wire cluster sharing the most
+    extracted tickers, provided some member pair is within ``window_hours``.
+    Over-merging is the safe failure mode: the grader's rules explicitly split
+    genuinely distinct events via ``additional_catalysts``. Undated members on
+    either side skip the merge (conservative).
+    """
+    def _tickers(members: list[dict[str, Any]]) -> set[str]:
+        return {t for m in members for t in m["_tickers"]}
+
+    narrative = [g for g in grouped
+                 if any(d.get("source_type", "rss") not in _REGULATORY_TYPES for d in g)]
+    regulatory = [g for g in grouped
+                  if all(d.get("source_type", "rss") in _REGULATORY_TYPES for d in g)]
+
+    out = list(narrative)
+    for reg in regulatory:
+        reg_tickers = _tickers(reg)
+        best: Optional[list[dict[str, Any]]] = None
+        best_overlap = 0
+        for target in out:
+            overlap = len(reg_tickers & _tickers(target))
+            if overlap <= best_overlap:
+                continue
+            gap = _min_gap_hours(reg, target)
+            if gap is not None and gap <= window_hours:
+                best, best_overlap = target, overlap
+        if best is not None:
+            best.extend(reg)
+        else:
+            out.append(reg)
+    return out
 
 
 def build_story_clusters(
@@ -283,7 +348,9 @@ def build_story_clusters(
     M&A story is ONE cluster with both names as candidates, not two duplicate
     clusters. Candidates = union of extracted tickers over members (the "never
     invent tickers" list handed to the LLM), which may include non-shortlist
-    counterparties.
+    counterparties. After title clustering, all-regulatory clusters are folded
+    into the wire cluster covering the same tickers in the same time window —
+    the 8-K and the PR about one event become ONE deep read, not two.
     """
     relevant: list[dict[str, Any]] = []
     for doc in docs:
@@ -296,8 +363,10 @@ def build_story_clusters(
         if any(t in shortlist_tickers for t in tickers):
             relevant.append({**doc, "_tickers": tickers})
 
+    grouped = _merge_regulatory_into_narrative(_cluster(relevant))
+
     out: list[dict[str, Any]] = []
-    for members in _cluster(relevant):
+    for members in grouped:
         candidates = sorted({t for m in members for t in m["_tickers"]})
         out.append({
             "cluster_id": _cluster_id(members),
@@ -419,8 +488,16 @@ def render_cluster_input(
     profile: str,
     features_by_ticker: dict[str, Any],
     name_map: Optional[dict[str, str]] = None,
+    scheduled: Optional[dict[str, list[dict[str, Any]]]] = None,
 ) -> str:
-    """One INPUT block in exactly the format the system prompt's examples use."""
+    """
+    One INPUT block in exactly the format the system prompt's examples use.
+
+    ``scheduled`` maps ticker -> known forward-calendar entries for this
+    session; matches render as an extra SCHEDULED line so the grader has
+    calendar corroboration for its ``is_priced_in`` judgment (rule 5) instead
+    of inferring "telegraphed" from prose alone.
+    """
     members = cluster["members"]
     candidates = cluster["candidates"]
     names = name_map or {}
@@ -446,6 +523,18 @@ def render_cluster_input(
             f"pre_market_confirmation={_premarket_confirmation(candidates, features_by_ticker)}"
         ),
         f"SENTIMENT: score={sent_score:.2f} label={sent_label}",
+    ]
+    sched_bits: list[str] = []
+    for t in candidates:
+        for e in (scheduled or {}).get(t, []):
+            bit = f"{t} {e.get('event_type', 'event')} {e.get('event_date', '')}".strip()
+            if bit not in sched_bits:
+                sched_bits.append(bit)
+    if sched_bits:
+        lines.append(
+            f"SCHEDULED: {'; '.join(sched_bits)} (on the calendar before this window)"
+        )
+    lines += [
         f"CANDIDATES: {'; '.join(cand_bits) if cand_bits else '(none)'}",
         f"CLUSTER {cluster['cluster_id']} ({len(members)} report{'s' if len(members) != 1 else ''})",
     ]
@@ -757,8 +846,12 @@ class _GradeCache:
 _cache = _GradeCache()
 
 
-def _cache_key(model: str, cluster_id: str) -> str:
-    return f"catalyst:deep_read:{model}:{cluster_id}"
+def _cache_key(model: str, input_text: str) -> str:
+    # Keyed on the *rendered input*, not just the cluster id: a new member, a
+    # SCHEDULED calendar match, or changed pre-score buckets re-grades rather
+    # than serving a grade computed from stale context.
+    digest = hashlib.sha1(input_text.encode()).hexdigest()[:16]
+    return f"catalyst:deep_read:{model}:{digest}"
 
 
 # --- LLM orchestration -------------------------------------------------------- #
@@ -783,9 +876,13 @@ async def deep_read(
     ticker_extractor: Any = None,
     name_map: Optional[dict[str, str]] = None,
     max_reads: Optional[int] = None,
+    scheduled: Optional[dict[str, list[dict[str, Any]]]] = None,
 ) -> dict[str, Any]:
     """
     Grade the shortlist's top story clusters, one LLM call per cluster.
+
+    ``scheduled`` (ticker -> forward-calendar entries for this session) renders
+    as a SCHEDULED line so the grader can corroborate ``is_priced_in``.
 
     Returns ``{"grades": [...], "status": None|reason, "model": str,
     "clusters_considered": int, "cached": int}``. Each grades entry carries the
@@ -844,10 +941,12 @@ async def deep_read(
             "input": render_cluster_input(
                 cluster, profile=profile,
                 features_by_ticker=features_by_ticker, name_map=name_map,
+                scheduled=scheduled,
             ),
             "raw": None, "grade": None, "cached": False, "error": None,
         }
-        cached = await _cache.get(_cache_key(model, cluster["cluster_id"]))
+        cache_key = _cache_key(model, entry["input"])
+        cached = await _cache.get(cache_key)
         if cached is not None:
             grade = validate_grade(cached, cluster["candidates"])
             if grade:
@@ -863,9 +962,7 @@ async def deep_read(
                 entry["error"] = "unparseable model output"
             else:
                 entry["grade"] = grade
-                await _cache.set(
-                    _cache_key(model, cluster["cluster_id"]), grade, CACHE_TTL_SECONDS
-                )
+                await _cache.set(cache_key, grade, CACHE_TTL_SECONDS)
         except Exception as exc:  # noqa: BLE001
             entry["error"] = f"{type(exc).__name__}: {exc}"[:300]
             log.warning("deep read failed for %s: %s", cluster["cluster_id"], entry["error"])

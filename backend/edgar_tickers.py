@@ -49,7 +49,13 @@ def parse_company_tickers(raw: Any) -> dict[int, str]:
 
     The file is a dict of rows ``{"0": {"cik_str": 320193, "ticker": "AAPL",
     "title": "Apple Inc."}, ...}``. Rows missing a CIK or ticker are skipped.
-    On a duplicate CIK the first ticker wins (the file lists one row per CIK).
+
+    **Dual-class policy (deliberate):** on a duplicate CIK the FIRST row wins.
+    SEC orders the file with the primary/most-liquid listing first (verified
+    2026-07-03: GOOGL row 1 vs GOOG row 7470, BRK-B 9 vs BRK-A 7472, FOXA
+    before FOX, NWSA before NWS, UAA before UA), so first-row-wins pins each
+    filer to the share class the ranker scores — the liquid line, not the
+    super-voting one.
     """
     rows = raw.values() if isinstance(raw, dict) else (raw or [])
     cik_map: dict[int, str] = {}

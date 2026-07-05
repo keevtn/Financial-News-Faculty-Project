@@ -3,9 +3,11 @@ ticker_extractor.py
 ===================
 Extracts stock ticker symbols from financial news text.
 
-Two-pass approach:
+Three-pass approach:
   1. Pattern matching  — catches $AAPL, (AAPL), NYSE: AAPL  (high precision)
-  2. Company name map  — maps ~80 major company names to their tickers
+  2. Company name map  — major company names + unambiguous subsidiary/brand
+                         names read through to the listed parent (YouTube→GOOGL)
+  3. EDGAR CIK lookup  — resolves the 10-digit CIK in filing titles (needs cik_map)
 
 Returns a sorted, deduplicated list of ticker strings.
 """
@@ -354,6 +356,66 @@ _COMPANY_TICKERS: dict[str, str] = {
     "roblox":                   "RBLX",
 }
 
+# ---------------------------------------------------------------------------
+# Subsidiary / brand → listed-parent read-through
+# ---------------------------------------------------------------------------
+# News about a subsidiary or flagship brand moves the listed parent, but the
+# parent's name often never appears ("YouTube pulls ads…" moves GOOGL). Names
+# here must be unambiguous on a word boundary — no generic English collisions
+# ("ring", "windows", "target") and no standalone-listed names (Instacart,
+# Chewy have their own tickers). Merged into the extractor's name map.
+_SUBSIDIARY_TICKERS: dict[str, str] = {
+    # Meta
+    "facebook":                 "META",
+    "instagram":                "META",
+    "whatsapp":                 "META",
+    "oculus":                   "META",
+    # Alphabet
+    "youtube":                  "GOOGL",
+    "waymo":                    "GOOGL",
+    "deepmind":                 "GOOGL",
+    "android":                  "GOOGL",
+    "waze":                     "GOOGL",
+    "fitbit":                   "GOOGL",
+    # Amazon
+    "aws":                      "AMZN",
+    "whole foods":              "AMZN",
+    "twitch":                   "AMZN",
+    "audible":                  "AMZN",
+    "zappos":                   "AMZN",
+    # Microsoft
+    "linkedin":                 "MSFT",
+    "github":                   "MSFT",
+    "xbox":                     "MSFT",
+    "azure":                    "MSFT",
+    "activision blizzard":      "MSFT",
+    # Disney
+    "espn":                     "DIS",
+    "hulu":                     "DIS",
+    "pixar":                    "DIS",
+    "marvel studios":           "DIS",
+    # Berkshire
+    "geico":                    "BRK-B",
+    "bnsf":                     "BRK-B",
+    # Consumer parents
+    "frito-lay":                "PEP",
+    "gatorade":                 "PEP",
+    "kfc":                      "YUM",
+    "taco bell":                "YUM",
+    "pizza hut":                "YUM",
+    "sam's club":               "WMT",
+    "sams club":                "WMT",
+    "old navy":                 "GPS",
+    "banana republic":          "GPS",
+    # Payments / software
+    "venmo":                    "PYPL",
+    "cash app":                 "SQ",
+    "slack":                    "CRM",
+    "tableau":                  "CRM",
+    "red hat":                  "IBM",
+    "vmware":                   "AVGO",
+}
+
 
 # ---------------------------------------------------------------------------
 # Extractor class
@@ -379,8 +441,11 @@ class TickerExtractor:
         self,
         extra_mappings: Optional[dict[str, str]] = None,
         cik_map: Optional[dict[int, str]] = None,
+        include_subsidiaries: bool = True,
     ) -> None:
         self._mappings: dict[str, str] = dict(_COMPANY_TICKERS)
+        if include_subsidiaries:
+            self._mappings.update(_SUBSIDIARY_TICKERS)
         if extra_mappings:
             self._mappings.update({k.lower(): v for k, v in extra_mappings.items()})
         self._cik_map: dict[int, str] = cik_map or {}

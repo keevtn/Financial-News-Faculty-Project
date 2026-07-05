@@ -164,6 +164,9 @@ FILTER_KEYWORDS: list[str] = [
     "sec filing", "lawsuit", "settlement", "investigation",
     # FDA / pharma
     "fda", "recall", "drug approval", "clinical trial",
+    # Short-seller / activist research ("short" is substring-matched, so it
+    # also catches "shorting", "short thesis", "MW is Short …")
+    "short", "fraud", "overvalued", "misleading investors",
     # Crypto / digital assets
     "bitcoin", "crypto", "ethereum", "blockchain",
 ]
@@ -438,6 +441,29 @@ DEFAULT_RSS_FEEDS: list[dict[str, str]] = [
     # challenge that returns HTTP 403 "Just a moment..." to any server-side
     # fetch, so it cannot be ingested via a plain RSS poll. Re-add here if a
     # licensed/API feed URL becomes available.
+    # ── Short-seller / activist research ─────────────────────────────────────
+    # Major bearish catalysts (short_seller_report in the deep-read taxonomy)
+    # publish on research-shop blogs, not wires — without these feeds the
+    # catalyst lanes are structurally blind to them. All four probed live
+    # 2026-07-03 (HTTP 200 + RSS XML). Muddy Waters, Viceroy, and Ningi block
+    # server-side fetches (timeout/404/Cloudflare 403) and are intentionally
+    # omitted; Hindenburg disbanded Jan 2025.
+    {
+        "label": "Grizzly Research",
+        "url": "https://grizzlyreports.com/feed/",
+    },
+    {
+        "label": "The Bear Cave",
+        "url": "https://thebearcave.substack.com/feed",
+    },
+    {
+        "label": "Kerrisdale Capital",
+        "url": "https://www.kerrisdalecap.com/feed/",
+    },
+    {
+        "label": "Blue Orca Capital",
+        "url": "https://blueorcacapital.com/feed/",
+    },
     # ── SEC regulatory news (RSS) — routed to the "sec" lane so it joins EDGAR
     # filings in the regulatory catalyst profile and skips the keyword filter.
     {
@@ -698,6 +724,11 @@ _EDGAR_RSS_URL = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&typ
 DEFAULT_SEC_FILING_TYPES: list[str] = [
     "8-K", "10-K", "10-Q", "S-1", "6-K",
     "425", "S-4", "SC 13D", "SC 13D/A", "SC TO-T", "SC 14D9", "DEFM14A", "424B4",
+    # Amendments worth their own poll: S-1/A carries the terms/pricing updates
+    # on the IPO path; 8-K/A is the *correction* of a material disclosure.
+    # Same-window dedup is handled downstream — EDGAR titles for a base filing
+    # and its /A share nearly all tokens, so they title-cluster together.
+    "S-1/A", "8-K/A",
 ]
 
 

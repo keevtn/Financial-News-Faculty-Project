@@ -31,6 +31,31 @@ class TestParseCompanyTickers:
         assert et.parse_company_tickers({}) == {}
         assert et.parse_company_tickers(None) == {}
 
+    def test_dual_class_first_row_wins(self):
+        # SEC lists the primary/most-liquid class first (GOOGL before GOOG,
+        # BRK-B before BRK-A) — first-row-wins pins scoring to that line.
+        raw = {
+            "0": {"cik_str": 1652044, "ticker": "GOOGL", "title": "Alphabet Inc."},
+            "1": {"cik_str": 1067983, "ticker": "BRK-B", "title": "BERKSHIRE HATHAWAY INC"},
+            "2": {"cik_str": 1652044, "ticker": "GOOG", "title": "Alphabet Inc."},
+            "3": {"cik_str": 1067983, "ticker": "BRK-A", "title": "BERKSHIRE HATHAWAY INC"},
+        }
+        m = et.parse_company_tickers(raw)
+        assert m[1652044] == "GOOGL"
+        assert m[1067983] == "BRK-B"
+
+
+class TestParseCompanyNames:
+    def test_builds_name_map(self):
+        m = et.parse_company_names(_RAW)
+        assert m["AAPL"] == "Apple Inc."
+        assert m["MSFT"] == "MICROSOFT CORP"   # ticker key uppercased
+
+    def test_skips_missing_fields(self):
+        m = et.parse_company_names(_RAW)
+        assert "" not in m
+        assert all(v for v in m.values())
+
 
 _CIK_MAP = {320193: "AAPL", 1326200: "GNK"}
 

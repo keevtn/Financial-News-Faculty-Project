@@ -26,6 +26,16 @@ DEFAULT_THRESHOLDS: dict[str, float] = {
     "gossip_velocity": 3.0,    # mentions >= 3x trailing baseline
     "gossip_score": 65.0,      # OR a high gossip score
     "catalyst_score": 65.0,    # strong news catalyst
+    # Confidence tiers for DEEP-READ-graded catalyst items (items carrying the
+    # cluster grade's `confidence` + `deep_read` fields). Quantitative items
+    # keep the legacy score-only gate — their confidence is a source-count
+    # heuristic, not an extraction confidence, and the two aren't comparable.
+    #   conf >= auto            -> alert normally
+    #   min <= conf < auto      -> alert flagged needs_review (severity capped)
+    #   conf < min              -> archive (visible in the tab, no alert)
+    # A rumor grade is always at most review-tier, whatever its confidence.
+    "catalyst_confidence_auto": 0.75,
+    "catalyst_confidence_min": 0.50,
 }
 
 _SEV_ORDER = {"critical": 0, "high": 1, "medium": 2}
@@ -72,11 +82,24 @@ def evaluate_alerts(
             }
 
     for it in catalyst or []:
-        if it.get("catalyst_score", 0) >= th["catalyst_score"]:
-            hits[it["ticker"]]["catalyst"] = {
-                "score": it.get("catalyst_score", 0),
-                "rationale": (it.get("rationale") or "")[:140],
-            }
+        if it.get("catalyst_score", 0) < th["catalyst_score"]:
+            continue
+        tier = "auto"
+        dr = it.get("deep_read")
+        if dr is not None:  # cluster-graded item: apply the confidence tiers
+            conf = it.get("confidence")
+            conf = 1.0 if conf is None else float(conf)
+            if conf < th["catalyst_confidence_min"]:
+                continue  # archive tier: too uncertain to page anyone
+            if conf < th["catalyst_confidence_auto"] or dr.get("is_rumor"):
+                tier = "review"
+        hits[it["ticker"]]["catalyst"] = {
+            "score": it.get("catalyst_score", 0),
+            "rationale": (it.get("rationale") or "")[:140],
+            "tier": tier,
+            "event_type": (dr or {}).get("event_type"),
+            "is_rumor": bool((dr or {}).get("is_rumor")),
+        }
 
     alerts: list[dict[str, Any]] = []
     for ticker, sig in hits.items():
@@ -86,6 +109,12 @@ def evaluate_alerts(
         elif kinds & {"squeeze", "catalyst"}:
             severity = "high"
         else:
+            severity = "medium"
+
+        # A review-tier catalyst can't carry an alert to "high" on its own —
+        # confluence with a firing squeeze still can.
+        needs_review = sig.get("catalyst", {}).get("tier") == "review"
+        if needs_review and severity == "high" and "squeeze" not in kinds:
             severity = "medium"
 
         title, detail = _summarize(sig)
@@ -100,6 +129,7 @@ def evaluate_alerts(
             "signals": sorted(kinds),
             "value": round(value, 2),
             "tab": tab,
+            "needs_review": needs_review,
         })
 
     alerts.sort(key=lambda a: (_SEV_ORDER.get(a["severity"], 9), -a["value"]))
@@ -117,7 +147,15 @@ def _summarize(sig: dict[str, dict[str, Any]]) -> tuple[str, str]:
         g = sig["gossip"]
         parts.append(f"chatter {g['velocity']:.1f}× ({g.get('recent')} recent)")
     if "catalyst" in kinds:
-        parts.append(f"catalyst {sig['catalyst']['score']:.0f}")
+        c = sig["catalyst"]
+        bit = f"catalyst {c['score']:.0f}"
+        if c.get("event_type"):
+            bit += f" [{c['event_type']}]"
+        if c.get("is_rumor"):
+            bit += " (rumor)"
+        elif c.get("tier") == "review":
+            bit += " (review)"
+        parts.append(bit)
 
     if "squeeze" in kinds and "gossip" in kinds:
         title = "Short squeeze firing + social spike"

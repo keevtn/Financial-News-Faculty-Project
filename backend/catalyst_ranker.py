@@ -159,6 +159,22 @@ def _confirmation_factor(
     vol = 0.5 if rel_volume is None else max(0.0, min(rel_volume / _REL_VOL_SAT, 1.0))
     return round(1.0 + _CONFIRM_WEIGHT * mag * vol, 4)
 
+# Prominence: a ticker named only in article *bodies* (never a headline) is
+# usually an incidental mention — a competitor cited in someone else's story —
+# not the subject. Scale the pre-score by [_PROMINENCE_FLOOR, 1.0] on the share
+# of docs that name the ticker in the title, so incidental names stop wasting
+# deep-read gate slots without being hard-dropped (the LLM can still overturn).
+_PROMINENCE_FLOOR = 0.7
+
+
+def _prominence_factor(title_mention_share: Optional[float]) -> float:
+    """Pre-score multiplier in [0.7, 1.0]; 1.0 when share is unknown."""
+    if title_mention_share is None:
+        return 1.0
+    share = max(0.0, min(1.0, title_mention_share))
+    return round(_PROMINENCE_FLOOR + (1.0 - _PROMINENCE_FLOOR) * share, 4)
+
+
 _STOPWORDS: frozenset[str] = frozenset({
     "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "with",
     "at", "by", "from", "as", "is", "are", "be", "after", "amid", "over",
@@ -182,6 +198,7 @@ class CandidateFeatures:
     abnormal_attention: float = 1.0  # today's mentions / trailing daily baseline
     best_source_weight: float = 1.0  # max SOURCE_TYPE_WEIGHT seen
     credibility: float = 1.0         # max per-source credibility seen
+    title_mention_share: Optional[float] = None  # docs naming the ticker in the TITLE / n_docs; None = unknown
     market_cap: Optional[float] = None  # USD market cap (Yahoo/yfinance); None if unknown
     size_factor: float = 1.0         # size multiplier applied to the pre-score
     premarket: Optional[dict[str, Any]] = None  # {gap_pct, rel_volume, ...} or None
@@ -305,15 +322,22 @@ def build_candidates(
     given (e.g. unit tests).
     """
     by_ticker: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    # Which docs name each ticker in the TITLE (vs body-only, an incidental
+    # mention). Only knowable when the extractor re-extracts; None otherwise.
+    title_hits: dict[str, int] = defaultdict(int)
     for doc in docs:
         if ticker_extractor is not None:
             tickers = list(ticker_extractor.extract(
                 doc.get("title", ""), doc.get("description", "")
             ))
+            in_title = set(ticker_extractor.extract(doc.get("title", ""), ""))
         else:
             tickers = list(doc.get("tickers") or ())
+            in_title = set()
         for t in tickers:
             by_ticker[t].append(doc)
+            if t in in_title:
+                title_hits[t] += 1
 
     candidates: list[CandidateFeatures] = []
     for ticker, t_docs in by_ticker.items():
@@ -346,6 +370,10 @@ def build_candidates(
             abnormal_attention=round(abnormal, 3),
             best_source_weight=best_weight,
             credibility=round(credibility, 3),
+            title_mention_share=(
+                round(title_hits[ticker] / len(t_docs), 4)
+                if ticker_extractor is not None else None
+            ),
             sample_articles=_representative_articles(clusters),
             article_hashes=[d.get("content_hash", "") for d in t_docs],
         )
@@ -402,12 +430,14 @@ def score_candidates(
         confirmation_factor = _confirmation_factor(gap_pct, rel_volume)
         c.confirmation_factor = confirmation_factor
 
+        prominence_factor = _prominence_factor(c.title_mention_share)
+
         composite = (
             w["attention"] * attention
             + w["abnormal"] * abnormal
             + w["sentiment"] * sentiment
             + w["materiality"] * materiality
-        ) * credibility_factor * size_factor * confirmation_factor
+        ) * credibility_factor * size_factor * confirmation_factor * prominence_factor
 
         c.components = {
             "attention": round(attention, 4),
@@ -417,6 +447,7 @@ def score_candidates(
             "credibility_factor": round(credibility_factor, 4),
             "size_factor": round(size_factor, 4),
             "confirmation_factor": round(confirmation_factor, 4),
+            "prominence_factor": prominence_factor,
         }
         c.pre_score = round(100.0 * composite, 2)
 
@@ -722,6 +753,7 @@ async def rank_catalysts(
     trigger: str = "api",
     weights: Optional[dict[str, float]] = None,
     profile: str = DEFAULT_PROFILE,
+    calendar_collection: Any = None,
 ) -> dict[str, Any]:
     """
     Run the full pipeline and return a ranking result dict (not yet persisted).
@@ -730,7 +762,10 @@ async def rank_catalysts(
     ``trigger`` records how the run was initiated ("manual" | "scheduled" |
     "api") for cooldown accounting; ``weights`` overrides the composite
     pre-score weights (the auto-tuner passes the tuned vector, else defaults);
-    ``profile`` scopes which source types are ranked (see ``CATALYST_PROFILES``).
+    ``profile`` scopes which source types are ranked (see ``CATALYST_PROFILES``);
+    ``calendar_collection`` (optional) enables the forward calendar — known
+    scheduled events corroborate the deep read's priced-in judgment, and this
+    run's forward-looking grades are recorded back for future runs.
     """
     now = now or datetime.now(tz=timezone.utc)
     start, end = overnight_window(now)
@@ -769,14 +804,21 @@ async def rank_catalysts(
     prompt = raw_llm = llm_status = None
     deep: Optional[dict[str, Any]] = None
     deep_read_mod: Any = None
+    scheduled: Optional[dict[str, Any]] = None
     mode = os.environ.get(_DEEP_READ_MODE_ENV, "cluster")
     if use_llm and shortlist:
         if mode == "cluster":
             try:
                 import catalyst_deep_read as deep_read_mod
+                if calendar_collection is not None:
+                    import catalyst_calendar
+                    scheduled = await catalyst_calendar.lookup_scheduled(
+                        calendar_collection, [c.ticker for c in shortlist],
+                        start=start, end=end,
+                    )
                 deep = await deep_read_mod.deep_read(
                     docs, shortlist, profile=profile, model=model,
-                    ticker_extractor=ticker_extractor,
+                    ticker_extractor=ticker_extractor, scheduled=scheduled or None,
                 )
                 llm_status = deep["status"]
             except Exception as exc:  # noqa: BLE001
@@ -798,6 +840,7 @@ async def rank_catalysts(
             "source_types": c.source_types,
             "mean_sentiment": c.mean_sentiment,
             "abnormal_attention": c.abnormal_attention,
+            "title_mention_share": c.title_mention_share,
             "market_cap": c.market_cap,
             "size_factor": c.size_factor,
             "premarket": c.premarket,
@@ -845,7 +888,7 @@ async def rank_catalysts(
     for rank, it in enumerate(items, start=1):
         it["rank"] = rank
 
-    return {
+    result = {
         "run_id": uuid.uuid4().hex,
         "generated_at": now,
         "window_start": start,
@@ -868,6 +911,9 @@ async def rank_catalysts(
         "items": items,
         "prompt": prompt,
         "raw_llm": raw_llm,
+        # Forward-calendar entries that matched this window's shortlist (fed to
+        # the deep read as SCHEDULED context for the priced-in judgment).
+        "scheduled_matches": scheduled or None,
         # Cluster deep-read audit trail: per-cluster inputs/raw outputs persisted
         # for reproducibility (projected out of reads), plus the items the grader
         # overturned as immaterial (is_material=false -> dropped from ranking).
@@ -881,6 +927,19 @@ async def rank_catalysts(
             "grades": deep["grades"],
         } if deep else None),
     }
+
+    # Bank this run's forward-looking grades (PDUFA dates, projected lockups…)
+    # for future runs' SCHEDULED context. Never fatal to the run itself.
+    if calendar_collection is not None and result["deep_read"]:
+        try:
+            import catalyst_calendar
+            n = await catalyst_calendar.record_run(calendar_collection, result, now=now)
+            if n:
+                log.info("calendar: recorded %d forward entries", n)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("calendar record failed (%s)", type(exc).__name__)
+
+    return result
 
 
 # --- Persistence ----------------------------------------------------------- #

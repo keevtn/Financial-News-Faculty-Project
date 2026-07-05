@@ -120,6 +120,7 @@ async def _tick(app: Any) -> None:
                 result = await rank_catalysts(
                     news, use_llm=use_llm, trigger="scheduled",
                     weights=await _load_tuned_weights(meta), profile=profile,
+                    calendar_collection=getattr(app.state, "catalyst_calendar_collection", None),
                 )
                 await save_ranking(coll, result)
                 log.info("catalyst scheduler: ranking saved (profile=%s run_id=%s used_llm=%s)",

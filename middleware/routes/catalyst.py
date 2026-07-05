@@ -316,6 +316,7 @@ async def run(
         trigger=trigger,
         weights=await _load_tuned_weights(request),
         profile=profile,
+        calendar_collection=getattr(request.app.state, "catalyst_calendar_collection", None),
     )
     await save_ranking(coll, result)
     return {"ranking": result}

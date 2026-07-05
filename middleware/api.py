@@ -89,6 +89,7 @@ async def lifespan(app: FastAPI):
             app.state.squeeze_collection = client["financial_news"]["squeeze_rankings"]
             app.state.universe_collection = client["financial_news"]["catalyst_universe"]
             app.state.catalyst_meta_collection = client["financial_news"]["catalyst_meta"]
+            app.state.catalyst_calendar_collection = client["financial_news"]["catalyst_calendar"]
             log.info("MongoDB connected")
         except Exception as exc:
             log.error("Failed to connect to MongoDB: %s", exc)
@@ -98,6 +99,7 @@ async def lifespan(app: FastAPI):
             app.state.squeeze_collection = None
             app.state.universe_collection = None
             app.state.catalyst_meta_collection = None
+            app.state.catalyst_calendar_collection = None
     else:
         log.warning("MONGODB_URI not set — /api/news will return empty results")
         app.state.mongo_client = None
@@ -106,6 +108,7 @@ async def lifespan(app: FastAPI):
         app.state.squeeze_collection = None
         app.state.universe_collection = None
         app.state.catalyst_meta_collection = None
+        app.state.catalyst_calendar_collection = None
 
     # In-process ingestion (only when RUN_INGESTION=true — see ingestion_runner).
     # Keeps the feeds fresh on the hosted deployment without a separate worker.

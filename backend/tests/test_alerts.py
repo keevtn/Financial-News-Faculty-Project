@@ -69,3 +69,49 @@ def test_severity_counts():
     assert counts["critical"] == 1   # HOT
     assert counts["high"] == 1       # S
     assert counts["medium"] == 1     # G
+
+
+# --- deep-read confidence tiers --------------------------------------------- #
+
+def _ca_deep(ticker, score, confidence, is_rumor=False, event_type="fda_approval"):
+    return {"ticker": ticker, "catalyst_score": score, "rationale": "graded",
+            "confidence": confidence,
+            "deep_read": {"event_type": event_type, "is_rumor": is_rumor}}
+
+
+class TestConfidenceTiers:
+    def test_high_confidence_fires_normally(self):
+        out = alerts.evaluate_alerts(catalyst=[_ca_deep("A", 80, 0.9)])
+        assert out[0]["severity"] == "high"
+        assert out[0]["needs_review"] is False
+        assert "[fda_approval]" in out[0]["detail"]
+
+    def test_mid_confidence_is_review_tier(self):
+        out = alerts.evaluate_alerts(catalyst=[_ca_deep("A", 80, 0.6)])
+        assert out[0]["needs_review"] is True
+        assert out[0]["severity"] == "medium"     # capped without confluence
+        assert "(review)" in out[0]["detail"]
+
+    def test_low_confidence_archived(self):
+        assert alerts.evaluate_alerts(catalyst=[_ca_deep("A", 80, 0.4)]) == []
+
+    def test_rumor_forces_review_even_when_confident(self):
+        out = alerts.evaluate_alerts(catalyst=[_ca_deep("A", 80, 0.9, is_rumor=True)])
+        assert out[0]["needs_review"] is True
+        assert "(rumor)" in out[0]["detail"]
+
+    def test_squeeze_confluence_keeps_high_despite_review(self):
+        out = alerts.evaluate_alerts(
+            squeeze=[_sq("A", 60)],
+            catalyst=[_ca_deep("A", 80, 0.6)],
+        )
+        assert out[0]["severity"] == "high"       # squeeze earns it on its own
+        assert out[0]["needs_review"] is True
+
+    def test_legacy_quantitative_item_ungated(self):
+        # No deep_read field -> the source-count confidence isn't tier-gated.
+        out = alerts.evaluate_alerts(
+            catalyst=[{"ticker": "Q", "catalyst_score": 80,
+                       "rationale": "quant", "confidence": 0.4}])
+        assert out and out[0]["severity"] == "high"
+        assert out[0]["needs_review"] is False
