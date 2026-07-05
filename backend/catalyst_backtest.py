@@ -5,7 +5,7 @@ Offline backtest harness for the catalyst **pre-score filter**.
 
 Re-ranks already-*graded* runs under candidate scoring formulas and measures
 whether the new ordering puts the bigger realized movers nearer the top — using
-the open->close moves we already froze onto each run at grading time, so it
+the gap-inclusive (prev_close->close) moves frozen onto each run at grading time, so it
 needs no network, no LLM, and no price re-fetch. Everything here is pure and
 deterministic, hence unit-testable without a database.
 

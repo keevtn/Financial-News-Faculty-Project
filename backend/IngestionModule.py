@@ -473,6 +473,10 @@ DEFAULT_RSS_FEEDS: list[dict[str, str]] = [
         # catalyst; item titles are bare symbols. Verified live 2026-07-05.
         "label": "Nasdaq Trade Halts",
         "url": "https://www.nasdaqtrader.com/rss.aspx?feed=tradehalts",
+        # Bare-symbol titles ("JZ") carry no finance keywords, so this feed
+        # dies at the relevance filter unless exempted — a halt row is
+        # inherently financial, same argument as the SEC/FDA exemption.
+        "always_dispatch": True,
     },
     {
         "label": "Nasdaq Markets",
@@ -1162,6 +1166,12 @@ class IngestionAgent:
         self.dispatcher = DispatchRouter()
         # Use FILTER_KEYWORDS by default; pass keywords=[] to disable filtering
         self._filter = KeywordFilter(keywords if keywords is not None else FILTER_KEYWORDS)
+        # Feeds that declare always_dispatch skip keyword gating (exchange-ops
+        # rows like Nasdaq Trade Halts have bare-symbol titles by design).
+        self._filter_exempt: frozenset = frozenset(
+            f.get("label", "") for f in (rss_feeds or DEFAULT_RSS_FEEDS)
+            if f.get("always_dispatch")
+        )
         self._classifier = TopicClassifier()
         from ticker_extractor import TickerExtractor
         self._ticker_extractor = TickerExtractor()
@@ -1205,7 +1215,8 @@ class IngestionAgent:
             # no filing or enforcement notice is silently dropped just because
             # "Apple" or "Pfizer" don't appear in FILTER_KEYWORDS.
             is_regulatory = item.source_type in ("sec", "fda")
-            if is_regulatory or self._filter.accepts(item):
+            is_exempt_feed = item.source in self._filter_exempt
+            if is_regulatory or is_exempt_feed or self._filter.accepts(item):
                 # Only social items (Reddit RSS feeds carry source_type="social")
                 # get their cashtags gated against the real-ticker universe —
                 # that's where fake $YOLO/$MOON symbols come from. Structured

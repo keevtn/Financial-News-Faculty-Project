@@ -367,7 +367,17 @@ def build_candidates(
             for d in t_docs
             if isinstance(d.get("sentiment"), dict) and d["sentiment"].get("score") is not None
         ]
-        mean_sent = sum(sentiments) / len(sentiments) if sentiments else 0.0
+        # Conviction-weighted mean with a routine floor: a plain mean let five
+        # neutral recaps (0.0) dilute one -0.8 CRL to -0.13 — under the +/-0.15
+        # direction floor, neutralizing exactly the best-covered catalysts.
+        # Weighting each doc by max(|score|, conviction band) keeps strong docs
+        # dominant over routine recaps (5x0.0 + -0.8 -> -0.41, bearish) while
+        # routine docs still vote neutral with the band's weight, so a lone
+        # mild-positive dividend line among quiet tape stays under the floor
+        # (+0.20 & 0.0 -> +0.11, neutral). Opposing strong docs cancel honestly.
+        w_total = sum(max(abs(s), _DIRECTION_CONVICTION) for s in sentiments)
+        mean_sent = (sum(max(abs(s), _DIRECTION_CONVICTION) * s for s in sentiments)
+                     / w_total) if w_total else 0.0
 
         base = max(baseline_daily.get(ticker, 0.0), _MIN_BASELINE)
         abnormal = len(t_docs) / base
@@ -1020,11 +1030,15 @@ def grade_ranking(
     """
     Direction-agnostic reaction check (Branch 1 honest evaluation).
 
-    ``price_history`` maps ticker -> {"open": float, "close": float} for the
-    session that followed the ranking. Computes, per ticker, the absolute
-    open->close move, then checks whether the top half of the ranking moved more
-    than the bottom half (did we find the real catalysts?) and a directional
-    hit-rate (bonus signal toward future price prediction).
+    ``price_history`` maps ticker -> {"open", "close", "prev_close"} for the
+    session that followed the ranking. The realized move is measured from
+    **prev_close** (the last pre-catalyst price) to the session close, so the
+    overnight gap — where overnight catalysts express most of their move — is
+    included. Falls back to open->close (basis "open") only when no prior
+    close exists. ``gap_return`` / ``drift_return`` are also recorded per
+    ticker so gap-capture vs post-open drift stay separately observable.
+    Then: did the top half of the ranking move more than the bottom half, and
+    a directional hit-rate on the same gap-inclusive return.
 
     Returns a metrics dict; ungraded tickers (no price data) are skipped.
     """
@@ -1033,7 +1047,10 @@ def grade_ranking(
         ph = price_history.get(it["ticker"])
         if not ph or not ph.get("open"):
             continue
-        ret = (ph["close"] - ph["open"]) / ph["open"]
+        prev_close = ph.get("prev_close")
+        entry = prev_close if prev_close else ph["open"]
+        basis = "prev_close" if prev_close else "open"
+        ret = (ph["close"] - entry) / entry
         predicted = it.get("direction", "neutral")
         hit = (
             (predicted == "bullish" and ret > 0)
@@ -1044,6 +1061,10 @@ def grade_ranking(
             "rank": it["rank"],
             "abs_move": abs(ret),
             "return": ret,
+            "entry_basis": basis,
+            "gap_return": (round((ph["open"] - prev_close) / prev_close, 5)
+                           if prev_close else None),
+            "drift_return": round((ph["close"] - ph["open"]) / ph["open"], 5),
             "direction": predicted,
             "direction_hit": hit if predicted != "neutral" else None,
         })
@@ -1063,8 +1084,11 @@ def grade_ranking(
         if directional else None
     )
 
+    bases = {g["entry_basis"] for g in graded}
     return {
         "graded": len(graded),
+        "entry_basis": ("prev_close" if bases == {"prev_close"}
+                        else "open" if bases == {"open"} else "mixed"),
         "top_half_avg_abs_move": round(top_move, 5),
         "bottom_half_avg_abs_move": round(bottom_move, 5),
         "reaction_separation": round(top_move - bottom_move, 5),
@@ -1077,21 +1101,31 @@ def _fetch_session_prices_sync(
     tickers: list[str], start: datetime, end: datetime
 ) -> dict[str, dict[str, float]]:
     """
-    Pull daily open/close for ``tickers`` for the session covering [start, end].
-    Synchronous (yfinance) — call via ``asyncio.to_thread``.
+    Pull daily prices for the session covering [start, end] **plus the prior
+    close**. Returns per ticker ``{"open", "close", "prev_close"}`` where
+    ``prev_close`` is the final close strictly before the graded session — the
+    last pre-catalyst price, so grading can include the overnight gap the
+    catalysts actually express in (``prev_close`` is None when yfinance has no
+    prior row, e.g. day-one listings). Synchronous — call via ``to_thread``.
     """
     import yfinance as yf
 
     out: dict[str, dict[str, float]] = {}
-    hist_start = start.date().isoformat()
+    hist_start = (start.date() - timedelta(days=10)).isoformat()  # room for holidays
     hist_end = (end.date() + timedelta(days=1)).isoformat()  # yfinance end is exclusive
+    target = start.date()
     for sym in tickers:
         try:
             df = yf.Ticker(sym).history(start=hist_start, end=hist_end, interval="1d")
             if df is None or df.empty:
                 continue
-            row = df.iloc[0]
-            out[sym] = {"open": float(row["Open"]), "close": float(row["Close"])}
+            idx = next((i for i, ts in enumerate(df.index) if ts.date() >= target), None)
+            if idx is None:
+                continue
+            row = df.iloc[idx]
+            prev_close = float(df.iloc[idx - 1]["Close"]) if idx >= 1 else None
+            out[sym] = {"open": float(row["Open"]), "close": float(row["Close"]),
+                        "prev_close": prev_close}
         except Exception as exc:  # noqa: BLE001
             log.warning("price fetch failed for %s: %s", sym, exc)
     return out
@@ -1104,8 +1138,10 @@ async def grade_run(
     now: Optional[datetime] = None,
 ) -> Optional[dict[str, Any]]:
     """
-    Grade one persisted run against the realized open->close move of the session
-    that followed it, and persist the metrics onto the run document.
+    Grade one persisted run against the realized **gap-inclusive** move of the
+    session that followed it (prev_close -> close; the overnight gap is the
+    return overnight catalysts express in), and persist the metrics onto the
+    run document.
 
     Returns the metrics dict, or ``None`` if the run can't be graded yet (no
     usable timestamp, or the next session hasn't closed). Shared by the manual

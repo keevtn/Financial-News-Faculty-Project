@@ -80,7 +80,9 @@ Start-Process powershell -ArgumentList "-NoExit", "-Command", @"
 if (-not $NoIngest) {
     # Window 3a: RSS + optional social (high-frequency, 60 s cycles)
     $socialArgs = if ($Social) { "--stocktwits --bluesky" } else { "" }
-    $rssArgs = ("--rss $socialArgs").Trim()
+    # --sentiment (LM) is REQUIRED here: without it MongoHandler stores structured
+    # docs with no sentiment field, and $setOnInsert makes that permanent.
+    $rssArgs = ("--rss --sentiment $socialArgs").Trim()
 
     Start-Process powershell -ArgumentList "-NoExit", "-Command", @"
         Set-Location '$root\backend'
@@ -93,7 +95,7 @@ if (-not $NoIngest) {
         Start-Process powershell -ArgumentList "-NoExit", "-Command", @"
             Set-Location '$root\backend'
             Write-Host '=== Ingestion: SEC + FDA ===' -ForegroundColor Magenta
-            & '$venvPy' run_ingest.py --sec --fda
+            & '$venvPy' run_ingest.py --sec --fda --sentiment
 "@
     }
 }

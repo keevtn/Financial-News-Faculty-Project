@@ -123,7 +123,9 @@ def test_build_candidates_aggregates_features():
     assert c.n_docs == 2
     assert c.n_stories == 1           # same headline -> one story
     assert c.n_sources == 2           # two independent outlets
-    assert abs(c.mean_sentiment - 0.4) < 1e-9
+    # magnitude-weighted mean: (0.5*0.5 + 0.3*0.3) / (0.5+0.3) = 0.425 —
+    # same-direction docs land between, tilted toward conviction.
+    assert abs(c.mean_sentiment - 0.425) < 1e-9
     assert abs(c.abnormal_attention - 2.0) < 1e-9   # 2 docs / baseline 1.0
 
 
@@ -231,6 +233,86 @@ def test_grade_ranking_separation_and_hit_rate():
 def test_grade_ranking_no_price_data():
     result = {"items": [{"ticker": "X", "rank": 1, "direction": "bullish"}]}
     assert cr.grade_ranking(result, {})["graded"] == 0
+
+
+def test_grade_ranking_gap_inclusive_basis():
+    # Overnight approval: +12% gap, then -2% intraday drift. The old
+    # open->close basis graded this bullish call a MISS (-2%); the
+    # prev_close basis captures the gap the catalyst expressed in.
+    result = {"items": [{"ticker": "GAP", "rank": 1, "direction": "bullish"}]}
+    prices = {"GAP": {"open": 112.0, "close": 109.76, "prev_close": 100.0}}
+    m = cr.grade_ranking(result, prices)
+    row = m["per_ticker"][0]
+    assert m["entry_basis"] == "prev_close"
+    assert row["entry_basis"] == "prev_close"
+    assert abs(row["return"] - 0.0976) < 1e-9
+    assert row["direction_hit"] is True            # gap made the call right
+    assert abs(row["gap_return"] - 0.12) < 1e-9
+    assert abs(row["drift_return"] - (-0.02)) < 1e-9
+
+
+def test_grade_ranking_open_fallback_and_mixed_basis():
+    result = {"items": [
+        {"ticker": "A", "rank": 1, "direction": "bullish"},
+        {"ticker": "B", "rank": 2, "direction": "bullish"},
+    ]}
+    prices = {"A": {"open": 100.0, "close": 105.0, "prev_close": 98.0},
+              "B": {"open": 50.0, "close": 51.0, "prev_close": None}}  # day-one listing
+    m = cr.grade_ranking(result, prices)
+    assert m["entry_basis"] == "mixed"
+    by = {r["ticker"]: r for r in m["per_ticker"]}
+    assert by["A"]["entry_basis"] == "prev_close"
+    assert by["B"]["entry_basis"] == "open"
+    assert by["B"]["gap_return"] is None
+
+
+# --- sentiment aggregation (audit fix: dilution) ----------------------------- #
+
+def test_neutral_recaps_do_not_dilute_strong_catalyst():
+    # The audit case: five neutral recaps + one -0.8 CRL. A plain mean
+    # (-0.8/6 = -0.133) sat under the +/-0.15 direction floor -> "neutral"
+    # on exactly the best-covered catalysts.
+    docs = [
+        {"title": f"Acme recap {i}", "description": "", "tickers": ["ACME"],
+         "source": f"S{i}", "source_type": "rss", "sentiment": {"score": 0.0},
+         "content_hash": f"n{i}"} for i in range(5)
+    ] + [
+        {"title": "FDA issues complete response letter for Acme", "description": "",
+         "tickers": ["ACME"], "source": "Reuters", "source_type": "rss",
+         "sentiment": {"score": -0.8}, "content_hash": "crl"},
+    ]
+    c = cr.build_candidates(docs, baseline_daily={"ACME": 1.0})[0]
+    # floor-weighted: (0.8*-0.8) / (5*0.15 + 0.8) = -0.4129 — direction survives
+    assert abs(c.mean_sentiment - (-0.4129)) < 1e-4
+    assert cr._direction_from_sentiment(c.mean_sentiment) == "bearish"
+
+
+def test_routine_tape_stays_under_the_floor():
+    # A lone mild-positive item (dividend declaration ~+0.2) among quiet tape
+    # must NOT get promoted to a direction call by the weighting.
+    docs = [
+        {"title": "Harbor declares quarterly dividend", "description": "",
+         "tickers": ["HRBB"], "source": "PR Newswire", "source_type": "rss",
+         "sentiment": {"score": 0.2}, "content_hash": "d1"},
+        {"title": "Harbor to speak at banking forum", "description": "",
+         "tickers": ["HRBB"], "source": "GlobeNewswire", "source_type": "rss",
+         "sentiment": {"score": 0.0}, "content_hash": "d2"},
+    ]
+    c = cr.build_candidates(docs, baseline_daily={"HRBB": 1.0})[0]
+    assert cr._direction_from_sentiment(c.mean_sentiment) == "neutral"
+
+
+def test_opposing_strong_docs_still_cancel():
+    docs = [
+        {"title": "Acme surges on results", "description": "", "tickers": ["ACME"],
+         "source": "A", "source_type": "rss", "sentiment": {"score": 0.8},
+         "content_hash": "p"},
+        {"title": "Acme faces major lawsuit", "description": "", "tickers": ["ACME"],
+         "source": "B", "source_type": "rss", "sentiment": {"score": -0.8},
+         "content_hash": "q"},
+    ]
+    c = cr.build_candidates(docs, baseline_daily={"ACME": 1.0})[0]
+    assert abs(c.mean_sentiment) < 1e-9   # honest ambiguity stays neutral
 
 
 class TestResolveMarketCaps:
