@@ -15,7 +15,7 @@ Returns a sorted, deduplicated list of ticker strings.
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import Iterable, Optional
 
 # ---------------------------------------------------------------------------
 # Regex patterns
@@ -42,6 +42,18 @@ _FALSE_POSITIVES: frozenset[str] = frozenset({
     # Common financial terms that appear uppercased
     "HOLD", "SELL", "BUY", "RATE", "BOND", "DEBT", "CASH", "RISK",
     "LOSS", "GAIN", "FUND", "RATE", "NOTE", "BILL", "SWAP",
+})
+
+# Major crypto symbols. These are NOT in SEC's equity universe, so a strict
+# "must be an SEC-listed ticker" check would wrongly drop legitimate crypto
+# cashtags ($BTC, $ETH) from social posts. Callers building a validation set for
+# social feeds union this in so real crypto mentions survive while meme/garbage
+# cashtags ($YOLO, $MOON) are still rejected. Kept deliberately small and
+# well-known — obscure alt-coins are out of scope.
+CRYPTO_TICKERS: frozenset[str] = frozenset({
+    "BTC", "ETH", "SOL", "XRP", "ADA", "DOGE", "DOT", "AVAX", "LINK",
+    "MATIC", "LTC", "BCH", "SHIB", "TRX", "UNI", "ATOM", "XLM", "ETC",
+    "NEAR", "APT", "ARB", "OP", "PEPE", "USDT", "USDC", "BNB",
 })
 
 # ---------------------------------------------------------------------------
@@ -435,6 +447,15 @@ class TickerExtractor:
         a third pass resolves the 10-digit CIK embedded in EDGAR filing titles to
         a ticker — the path that lets the regulatory lane turn filings (which
         carry a CIK, not a symbol) into ranked candidates.
+    valid_tickers:
+        Optional set of real, tradable ticker symbols (e.g. SEC's ~10k-row
+        universe from ``edgar_tickers.load_company_names`` ∪ ``CRYPTO_TICKERS``).
+        When provided, the pattern pass (cashtags / (TICKER) / NYSE: TICKER) is
+        gated against it so garbage cashtags like ``$YOLO`` / ``$MOON`` — the bulk
+        of "fake tickers" on Reddit and Bluesky — never get tagged. The name-map
+        and CIK passes are NOT gated: those resolve to real tickers by
+        construction. Absent (or empty) → no gating, so a failed universe fetch
+        degrades to today's behavior rather than dropping every ticker.
     """
 
     def __init__(
@@ -442,6 +463,7 @@ class TickerExtractor:
         extra_mappings: Optional[dict[str, str]] = None,
         cik_map: Optional[dict[int, str]] = None,
         include_subsidiaries: bool = True,
+        valid_tickers: Optional[Iterable[str]] = None,
     ) -> None:
         self._mappings: dict[str, str] = dict(_COMPANY_TICKERS)
         if include_subsidiaries:
@@ -449,29 +471,112 @@ class TickerExtractor:
         if extra_mappings:
             self._mappings.update({k.lower(): v for k, v in extra_mappings.items()})
         self._cik_map: dict[int, str] = cik_map or {}
+        self._valid_tickers: Optional[frozenset[str]] = None
+        self.set_valid_tickers(valid_tickers)
 
-    def extract(self, title: str, description: str) -> tuple[str, ...]:
-        """Return a sorted tuple of unique ticker symbols found in the text."""
+    def set_valid_tickers(self, valid_tickers: Optional[Iterable[str]]) -> None:
+        """
+        Install (or clear) the real-ticker universe used to gate the pattern pass.
+        Lets callers construct the extractor synchronously and attach the universe
+        later, once the async SEC fetch has resolved. Empty/None clears gating.
+        """
+        self._valid_tickers = (
+            frozenset(t.upper() for t in valid_tickers) if valid_tickers else None
+        )
+
+    @property
+    def valid_tickers(self) -> Optional[frozenset[str]]:
+        """The installed real-ticker universe, or None when gating is off."""
+        return self._valid_tickers
+
+    def extract(
+        self, title: str, description: str, *, validate: Optional[bool] = None
+    ) -> tuple[str, ...]:
+        """
+        Return a sorted tuple of unique ticker symbols found in the text.
+
+        validate:
+            Controls the real-ticker gate on the pattern pass. ``None`` (default)
+            gates iff a ``valid_tickers`` universe is installed. ``True`` forces
+            gating on (no-op without a universe); ``False`` forces it off even
+            when a universe is present — used for structured feeds, where we keep
+            today's un-gated behavior and only validate social items.
+        """
         text = f"{title} {description}"
-        found: set[str] = set()
+        do_validate = (
+            self._valid_tickers is not None
+            if validate is None
+            else bool(validate) and self._valid_tickers is not None
+        )
 
-        # Pass 1 — explicit patterns ($TICKER, (TICKER), NYSE: TICKER)
+        # Pass 1 — explicit patterns ($TICKER, (TICKER), NYSE: TICKER). These are
+        # the only pass that can surface an arbitrary/fake symbol, so it's the one
+        # the universe gate is applied to.
+        pattern_hits: set[str] = set()
         for pattern in (_DOLLAR_PATTERN, _PAREN_PATTERN, _EXCHANGE_PATTERN):
             for m in pattern.finditer(text):
-                found.add(m.group(1).upper())
+                pattern_hits.add(m.group(1).upper())
+        if do_validate:
+            pattern_hits &= self._valid_tickers  # drop unrecognised cashtags
+
+        # Passes 2 & 3 resolve to real tickers by construction (curated name map,
+        # authoritative SEC CIK map) — trusted, never gated.
+        trusted: set[str] = set()
 
         # Pass 2 — company name lookup (word-boundary matched, case-insensitive)
         text_lower = text.lower()
         for name, ticker in self._mappings.items():
             if re.search(r'\b' + re.escape(name) + r'\b', text_lower):
-                found.add(ticker)
+                trusted.add(ticker)
 
         # Pass 3 — EDGAR CIK lookup (resolves filings to their ticker)
         if self._cik_map:
             for m in _CIK_PATTERN.finditer(text):
                 ticker = self._cik_map.get(int(m.group(1)))
                 if ticker:
-                    found.add(ticker)
+                    trusted.add(ticker)
 
-        found -= _FALSE_POSITIVES
+        found = (trusted | pattern_hits) - _FALSE_POSITIVES
         return tuple(sorted(found))
+
+
+# ---------------------------------------------------------------------------
+# Social helper
+# ---------------------------------------------------------------------------
+
+def extract_social_tickers(
+    extractor: TickerExtractor,
+    title: str,
+    description: str,
+    extra: Optional[dict] = None,
+) -> tuple[str, ...]:
+    """
+    Ticker set for a *social* item: validated text extraction plus any
+    platform-resolved symbols (StockTwits ``extra['ticker']`` / ``extra['symbols']``,
+    with the ``.X`` crypto suffix stripped). Platform symbols are validated against
+    the same universe as text cashtags when the extractor has one installed, so a
+    StockTwits-only / delisted symbol can't slip through the side door either.
+
+    Shared by the live social agent (``UnstructuredModule``) and the ticker
+    backfill so both produce identical results for the same document.
+    """
+    found: set[str] = set(extractor.extract(title, description, validate=True))
+    extra = extra or {}
+    universe = extractor.valid_tickers
+
+    candidates: list[str] = []
+    wl_ticker = extra.get("ticker")
+    if wl_ticker:
+        candidates.append(str(wl_ticker))
+    for sym in extra.get("symbols") or []:
+        if sym:
+            candidates.append(str(sym))
+
+    for raw in candidates:
+        sym = raw.replace(".X", "").upper().strip()
+        if not sym:
+            continue
+        if universe is None or sym in universe:
+            found.add(sym)
+
+    return tuple(sorted(found))

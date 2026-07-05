@@ -407,11 +407,13 @@ class UnstructuredAgent:
         )
         self._classifier = TopicClassifier()
         try:
-            from ticker_extractor import TickerExtractor
+            from ticker_extractor import TickerExtractor, extract_social_tickers
             self._ticker_extractor: "TickerExtractor | None" = TickerExtractor()
+            self._extract_social = extract_social_tickers
         except ImportError:
             log.warning("ticker_extractor not found — social tickers won't be tagged")
             self._ticker_extractor = None
+            self._extract_social = None
 
         self.enable_stocktwits = enable_stocktwits
         self.enable_bluesky = enable_bluesky
@@ -430,26 +432,26 @@ class UnstructuredAgent:
 
     def _extract_tickers(self, item: NewsItem) -> tuple[str, ...]:
         """
-        Combine platform-provided tickers with TickerExtractor results.
-        StockTwits items carry API-resolved symbols in extra["ticker"] and extra["symbols"].
-        For Reddit and Bluesky, TickerExtractor handles $TICKER patterns and company names.
+        Combine platform-provided tickers with validated TickerExtractor results.
+        StockTwits items carry API-resolved symbols in extra["ticker"]/extra["symbols"];
+        for Reddit and Bluesky, TickerExtractor handles $TICKER patterns and company
+        names. Cashtags and platform symbols are validated against the real-ticker
+        universe (SEC + major crypto) so fake $YOLO/$MOON tags never reach the feed.
         """
-        found: set[str] = set()
+        if self._ticker_extractor is None or self._extract_social is None:
+            # extractor unavailable — fall back to raw platform symbols only
+            found: set[str] = set()
+            wl_ticker = item.extra.get("ticker")
+            if wl_ticker:
+                found.add(str(wl_ticker).replace(".X", ""))
+            for sym in item.extra.get("symbols", []) or []:
+                if sym:
+                    found.add(str(sym).replace(".X", ""))
+            return tuple(sorted(found))
 
-        # StockTwits: watchlist ticker + API-tagged symbol list (strip .X crypto suffix)
-        wl_ticker = item.extra.get("ticker")
-        if wl_ticker:
-            found.add(str(wl_ticker).replace(".X", ""))
-        for sym in item.extra.get("symbols", []):
-            if sym:
-                found.add(str(sym).replace(".X", ""))
-
-        # TickerExtractor: $TICKER, (TICKER), NYSE: TICKER, company name map
-        if self._ticker_extractor is not None:
-            for t in self._ticker_extractor.extract(item.title, item.description):
-                found.add(t)
-
-        return tuple(sorted(found))
+        return self._extract_social(
+            self._ticker_extractor, item.title, item.description, item.extra
+        )
 
     async def _dispatch_loop(self) -> None:
         """Drain the shared queue: filter → classify → extract tickers → dispatch."""
@@ -471,8 +473,37 @@ class UnstructuredAgent:
             finally:
                 self._queue.task_done()
 
+    async def _install_ticker_universe(self) -> None:
+        """
+        Load SEC's real-ticker universe (+ major crypto) and install it on the
+        extractor so social cashtags ($YOLO, $MOON …) are validated away. Best
+        effort: on a fetch failure the universe stays unset and extraction falls
+        back to un-gated behavior rather than dropping every ticker.
+        """
+        if self._ticker_extractor is None:
+            return
+        try:
+            from listed_symbols import load_valid_tickers
+            universe = await load_valid_tickers()
+            if universe:
+                self._ticker_extractor.set_valid_tickers(universe)
+                log.info(
+                    "social ticker validation ON — %d real symbols in universe",
+                    len(universe),
+                )
+            else:
+                log.warning(
+                    "ticker universe empty — social cashtag validation disabled this run"
+                )
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "ticker universe load failed (%s) — social validation disabled",
+                type(exc).__name__,
+            )
+
     async def start(self) -> None:
         """Start all enabled extractors and the dispatch loop as background tasks."""
+        await self._install_ticker_universe()
         self._tasks = [
             asyncio.create_task(self._dispatch_loop(), name="social-dispatch")
         ]

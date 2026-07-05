@@ -146,4 +146,46 @@ Defined in `IngestionModule.py` → `STOCKTWITS_WATCHLIST`.
 | Financials | JPM, BAC |
 | Energy | XOM, CVX |
 | Technology / Semiconductors | AMD, INTC |
-| Bonds / Macro proxies | TLT, GLD
+| Bonds / Macro proxies | TLT, GLD |
+| Crypto | BTC.X, ETH.X |
+| High-sentiment / retail | GME, AMC, PLTR |
+
+> StockTwits users self-tag messages as bullish or bearish — this provides
+> human-labeled sentiment alongside our FinBERT scores.
+
+---
+
+### Bluesky — Keyword / Hashtag Search
+
+Consumed via the AT Protocol AppView API (no credentials):
+`https://api.bsky.app`
+
+No API key required. Searches run via `app.bsky.feed.searchPosts`.
+
+> **Endpoint note:** as of mid-2026 the *public* AppView host
+> (`public.api.bsky.app`) returns `403` for `searchPosts` (an anti-scraping
+> change), while the main AppView host `api.bsky.app` still serves the same
+> search unauthenticated. The extractor points at `api.bsky.app`.
+Defined in `IngestionModule.py` → `BLUESKY_SEARCH_TERMS`.
+
+| Category | Terms |
+|---|---|
+| Equities & market | #stocks, #investing, #stockmarket, #wallstreetbets, #earnings, #trading, #options, #ipo, #merger |
+| Macro | #economy, #inflation, #federalreserve, #gdp, #cpi |
+| Crypto | #crypto, #bitcoin, #ethereum, #defi |
+| Commodities / Energy | #gold, #oil, #commodities |
+| Bonds | #bonds, #treasury |
+| Tech / Sector | #fintech, #semiconductor, #ai |
+
+---
+
+## Summary
+
+| Source | Count | Credentials Required | Status |
+|---|---|---|---|
+| RSS Newswires | 15 feeds | None | Live |
+| SEC EDGAR | 5 filing types | None | Live |
+| FDA | 3 endpoints | None | Live |
+| Reddit (RSS) | 11 subreddits | None | Live |
+| StockTwits | 22 tickers | n/a | Disabled, need to gain access |
+| Bluesky | 27 search terms | None | Live (RUN_SOCIAL) |
