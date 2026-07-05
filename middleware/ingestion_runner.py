@@ -127,6 +127,7 @@ async def _start_structured(app: Any, mongo_uri: str, analyzer: Any, attach_stor
     storage = attach_storage(
         agent, enable_mongo=True, mongo_kwargs={"uri": mongo_uri}, analyzer=analyzer
     )
+    _attach_stream_publisher(agent, storage)
     try:
         await agent.start()
     except Exception as exc:  # noqa: BLE001
@@ -165,6 +166,7 @@ async def _start_social(app: Any, mongo_uri: str, analyzer: Any, attach_storage:
     storage = attach_storage(
         social, enable_mongo=True, mongo_kwargs={"uri": mongo_uri}, analyzer=analyzer
     )
+    _attach_stream_publisher(social, storage)
     try:
         await social.start()
     except Exception as exc:  # noqa: BLE001
@@ -177,6 +179,24 @@ async def _start_social(app: Any, mongo_uri: str, analyzer: Any, attach_storage:
     app.state.social_storage = storage
     log.info("In-process social ingestion started — stocktwits=%s bluesky=%s",
              enable_st, enable_bsky)
+
+
+def _attach_stream_publisher(agent: Any, storage: dict[str, Any]) -> None:
+    """
+    Register the squeeze live-feed publisher next to the storage handlers
+    (Phase 4 message-density events on ``squeeze:updates``). Gated by
+    RUN_SQUEEZE_STREAM (default on) and inert without REDIS_URI — a publish is
+    best-effort and can never slow or break ingestion.
+    """
+    if not _env_flag("RUN_SQUEEZE_STREAM", True):
+        return
+    try:
+        from squeeze_stream import IngestionStreamHandler
+        handler = IngestionStreamHandler()
+        agent.dispatcher.register(handler)
+        storage["squeeze_stream"] = handler
+    except Exception as exc:  # noqa: BLE001
+        log.info("squeeze stream handler not attached (%s)", type(exc).__name__)
 
 
 async def stop_ingestion(app: Any) -> None:

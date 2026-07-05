@@ -90,6 +90,12 @@ async def _tick(app: Any) -> None:
             await save_squeeze_ranking(coll, result)
             log.info("squeeze scheduler: saved run_id=%s (%d ranked, %d fueled)",
                      result.get("run_id"), len(result.get("items", [])), result.get("fueled_count"))
+            # Real-time push (Phase 4): best-effort, never blocks the lane.
+            try:
+                from squeeze_stream import publish_squeeze_run
+                await publish_squeeze_run(result)
+            except Exception as exc:  # noqa: BLE001
+                log.info("squeeze scheduler: stream publish skipped (%s)", type(exc).__name__)
     except Exception as exc:  # noqa: BLE001
         log.error("squeeze scheduler run step failed: %s", exc)
 
@@ -129,11 +135,4 @@ async def start_squeeze_scheduler(app: Any) -> None:
              interval, _env_float("SQUEEZE_RUN_INTERVAL", 14400.0))
 
 
-async def stop_squeeze_scheduler(app: Any) -> None:
-    task = getattr(app.state, "squeeze_scheduler_task", None)
-    if task is not None:
-        task.cancel()
-        try:
-            await asyncio.gather(task, return_exceptions=True)
-        except Exception as exc:  # noqa: BLE001
-            log.error("error stopping squeeze scheduler: %s", exc)
+a

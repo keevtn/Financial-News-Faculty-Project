@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Direction,
   SqueezeItem,
@@ -9,6 +9,7 @@ import {
   fetchLatestSqueeze,
   fetchSqueezeTrackRecord,
 } from "@/lib/api";
+import { useSqueezeStream } from "@/lib/useSqueezeStream";
 import { formatDistanceToNow } from "@/lib/time";
 import ChartIconButton from "./ChartIconButton";
 
@@ -55,12 +56,14 @@ function MeterBar({ label, value, color }: { label: string; value: number; color
   );
 }
 
-function SqueezeCard({ item }: { item: SqueezeItem }) {
+function SqueezeCard({ item, liveMentions }: { item: SqueezeItem; liveMentions?: number }) {
   const [open, setOpen] = useState(false);
   const dir = DIR[item.direction];
   const score = Math.max(0, Math.min(100, item.squeeze_score));
-  // Ignition tells whether the loaded setup is actually being talked up.
-  const status = item.ignition_score >= 0.4 ? "Firing" : "Primed";
+  // Ignition tells whether the loaded setup is actually being talked up;
+  // a fuel veto overrides everything (the covering-fuel thesis is dead).
+  const status = item.thesis_broken ? "Broken" : item.ignition_score >= 0.4 ? "Firing" : "Primed";
+  const halted = item.halted && !item.halted.resumed ? item.halted : null;
 
   return (
     <article className="bg-[#0f1629] border border-[#1e2d4a] rounded-lg overflow-hidden hover:border-[#2d4470] transition-colors">
@@ -93,11 +96,41 @@ function SqueezeCard({ item }: { item: SqueezeItem }) {
                 {dir.icon} {item.direction}
               </span>
               <span
-                className={`text-[10px] font-semibold uppercase tracking-wider ${item.ignition_score >= 0.4 ? "text-amber-400" : "text-slate-400"}`}
-                title={status === "Firing" ? "Heavy bullish chatter on a loaded setup" : "Loaded short setup, chatter still quiet"}
+                className={`text-[10px] font-semibold uppercase tracking-wider ${status === "Broken" ? "text-rose-400" : item.ignition_score >= 0.4 ? "text-amber-400" : "text-slate-400"}`}
+                title={
+                  status === "Broken"
+                    ? `Fuel veto: ${item.veto?.reason ?? "thesis-breaking news"} — ${item.veto?.headline ?? ""}`
+                    : status === "Firing"
+                      ? "Heavy bullish chatter on a loaded setup"
+                      : "Loaded short setup, chatter still quiet"
+                }
               >
                 {status}
               </span>
+              {item.thesis_broken && (
+                <span
+                  className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded border bg-rose-500/10 text-rose-400 border-rose-900"
+                  title={`${item.veto?.source ?? ""}: ${item.veto?.headline ?? "thesis-breaking news"} (${item.veto?.age_days ?? "?"}d ago)`}
+                >
+                  ⛔ thesis broken
+                </span>
+              )}
+              {halted && (
+                <span
+                  className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded border bg-red-500/10 text-red-400 border-red-900 animate-pulse"
+                  title="Trade halt from the Nasdaq Trade Halts feed (T1 news pending / T12 info requested / H11 regulatory)"
+                >
+                  ■ halted {halted.code ?? ""}
+                </span>
+              )}
+              {(liveMentions ?? 0) > 0 && (
+                <span
+                  className="inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded border bg-amber-500/10 text-amber-400 border-amber-900"
+                  title="Ticker-tagged items ingested live since this ranking (message density)"
+                >
+                  +{liveMentions} live
+                </span>
+              )}
             </div>
 
             <div className="flex flex-col items-end shrink-0">
@@ -113,10 +146,13 @@ function SqueezeCard({ item }: { item: SqueezeItem }) {
             <div className="h-full bg-[#00d4aa] transition-all duration-500" style={{ width: `${score}%` }} />
           </div>
 
-          {/* fuel + ignition meters */}
+          {/* fuel + ignition (+ news half) meters */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-1.5">
             <MeterBar label="Fuel" value={item.fuel_score} color="bg-rose-500/70" />
             <MeterBar label="Ignition" value={item.ignition_score} color="bg-amber-500/70" />
+            {item.news_ignition != null && (
+              <MeterBar label="News" value={item.news_ignition} color="bg-sky-500/70" />
+            )}
           </div>
 
           {/* short + social metrics */}
@@ -274,6 +310,8 @@ export default function SqueezeView() {
   const [ranking, setRanking] = useState<SqueezeRanking | null>(null);
   const [trackRecord, setTrackRecord] = useState<SqueezeTrackRecord | null>(null);
   const [loading, setLoading] = useState(true);
+  const stream = useSqueezeStream();
+  const seenRunRef = useRef<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -286,6 +324,22 @@ export default function SqueezeView() {
   useEffect(() => {
     load();
   }, []);
+
+  // Live push: a squeeze_run event means a fresh ranking was just persisted.
+  useEffect(() => {
+    const id = stream.lastRun?.run_id;
+    if (id && id !== seenRunRef.current) {
+      seenRunRef.current = id;
+      load();
+    }
+  }, [stream.lastRun]);
+
+  // Fallback: only poll while the live stream is down (SSE replaces polling).
+  useEffect(() => {
+    if (stream.connected) return;
+    const t = setInterval(load, 120_000);
+    return () => clearInterval(t);
+  }, [stream.connected]);
 
   return (
     <div className="flex-1 overflow-y-auto scrollbar-thin">
@@ -308,6 +362,18 @@ export default function SqueezeView() {
             <span>generated {formatDistanceToNow(ranking.generated_at)}</span>
           </div>
         )}
+
+        <span
+          className={`inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider ${stream.connected ? "text-emerald-400" : "text-slate-500"}`}
+          title={
+            stream.connected
+              ? `Live over SSE — ${stream.docTotal} item${stream.docTotal === 1 ? "" : "s"} streamed in`
+              : "Live stream offline — falling back to 2-minute polling"
+          }
+        >
+          <span className={`w-1.5 h-1.5 rounded-full ${stream.connected ? "bg-emerald-400 animate-pulse" : "bg-slate-600"}`} />
+          {stream.connected ? "live" : "polling"}
+        </span>
 
         <button
           onClick={load}
@@ -340,7 +406,11 @@ export default function SqueezeView() {
         ) : (
           <div className="flex flex-col gap-3 max-w-3xl mx-auto">
             {ranking.items.map((item) => (
-              <SqueezeCard key={item.ticker} item={item} />
+              <SqueezeCard
+                key={item.ticker}
+                item={item}
+                liveMentions={stream.docCounts[item.ticker]}
+              />
             ))}
           </div>
         )}

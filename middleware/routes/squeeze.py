@@ -5,6 +5,10 @@ Short-squeeze ranking endpoints (the social-driven cousin of the catalyst route)
 
   GET  /api/squeeze/latest   — most recent persisted squeeze ranking (public)
   GET  /api/squeeze/runs     — recent run metadata (public, cheap)
+  GET  /api/squeeze/stream   — Server-Sent Events live feed (public): relays the
+                               Redis ``squeeze:updates`` channel (new runs +
+                               per-doc message-density events). 503 without
+                               Redis so the frontend falls back to polling.
   POST /api/squeeze/run      — generate + persist a new ranking (protected)
 
 The read endpoints are public so the dashboard can show them. The run endpoint
@@ -20,6 +24,7 @@ import secrets
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Security
+from fastapi.responses import StreamingResponse
 from fastapi.security.api_key import APIKeyHeader
 
 from datetime import datetime
@@ -126,6 +131,68 @@ async def track_record(
     return {"summary": summary, "runs": runs}
 
 
+_SSE_HEARTBEAT_S = 25.0   # keepalive comment cadence (proxies drop idle streams)
+
+
+@router.get("/stream")
+@limiter.limit("20/minute")
+async def stream(request: Request) -> StreamingResponse:
+    """
+    Live squeeze feed over Server-Sent Events — relays the ``squeeze:updates``
+    Redis channel (``squeeze_run`` + ``doc`` events, JSON per message). Public
+    read, one long-lived response. Sends a keepalive comment every 25s. When
+    Redis isn't configured/reachable this 503s so the frontend keeps polling.
+    """
+    uri = os.environ.get("REDIS_URI", "").strip()
+    if not uri:
+        raise HTTPException(status_code=503, detail="Live stream unavailable (no Redis)")
+    try:
+        import redis.asyncio as aioredis
+        from squeeze_stream import CHANNEL
+        client = aioredis.from_url(uri, decode_responses=True,
+                                   socket_connect_timeout=2.0)
+        pubsub = client.pubsub()
+        await pubsub.subscribe(CHANNEL)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("squeeze stream subscribe failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Live stream unavailable")
+
+    async def _gen():
+        try:
+            yield "retry: 5000\n\n"                     # client reconnect hint
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    msg = await pubsub.get_message(
+                        ignore_subscribe_messages=True, timeout=_SSE_HEARTBEAT_S)
+                except Exception:  # noqa: BLE001 — Redis hiccup ends the stream
+                    break          # client's EventSource auto-reconnects
+                if msg is None:
+                    yield ": keepalive\n\n"
+                elif msg.get("type") == "message":
+                    yield f"data: {msg['data']}\n\n"
+        finally:
+            try:
+                await pubsub.unsubscribe(CHANNEL)
+                await pubsub.aclose()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                await client.aclose()
+            except Exception:  # noqa: BLE001
+                try:
+                    await client.close()
+                except Exception:  # noqa: BLE001
+                    pass
+
+    return StreamingResponse(_gen(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",   # defeat proxy buffering (nginx/Render)
+    })
+
+
 @router.post("/run", dependencies=[Depends(_require_key)])
 @limiter.limit("12/hour")
 async def run(
@@ -139,6 +206,12 @@ async def run(
         social_collection=getattr(request.app.state, "news_collection", None),
     )
     await save_squeeze_ranking(_squeeze_collection(request), result)
+    # Real-time push (Phase 4): best-effort, response never waits on Redis health.
+    try:
+        from squeeze_stream import publish_squeeze_run
+        await publish_squeeze_run(result)
+    except Exception as exc:  # noqa: BLE001
+        log.info("manual run: stream publish skipped (%s)", type(exc).__name__)
     return {"ranking": result}
 
 

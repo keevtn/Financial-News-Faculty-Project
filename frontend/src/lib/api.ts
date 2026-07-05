@@ -449,6 +449,21 @@ export interface SqueezePost {
   created_at: string;
 }
 
+export interface SqueezeVeto {
+  reason: string;                   // dilutive_offering | going_concern | chapter_11
+  headline: string;
+  source: string;
+  published_at: string | null;
+  age_days: number;
+}
+
+export interface SqueezeHalt {
+  code: string | null;              // T1 | T12 | H11 | ...
+  published_at: string | null;
+  resumed: boolean;
+  age_h: number;
+}
+
 export interface SqueezeItem {
   rank: number;
   ticker: string;
@@ -465,9 +480,13 @@ export interface SqueezeItem {
   divergence: string | null;        // early | mainstream | search-led | aligned
   engagement: number;
   fuel_score: number;               // 0..1
-  ignition_score: number;           // 0..1
+  ignition_score: number;           // 0..1 (post-blend, post-veto)
+  news_ignition: number | null;     // 0..1 structured-news half (null = no news data)
   squeeze_score: number;            // 0..100
   direction: Direction;
+  thesis_broken: boolean;           // fuel veto fired -- see `veto`
+  veto: SqueezeVeto | null;
+  halted: SqueezeHalt | null;       // Nasdaq trade-halt flag
   sources: string[];
   components: Record<string, number>;
   sample_posts: SqueezePost[];
@@ -482,6 +501,40 @@ export interface SqueezeRanking {
   social_count: number;
   items: SqueezeItem[];
 }
+
+// Live feed (Phase 4): SSE relay of the Redis squeeze:updates channel.
+export interface SqueezeRunEvent {
+  type: "squeeze_run";
+  run_id: string;
+  generated_at: string | null;
+  fueled_count: number | null;
+  universe_count: number | null;
+  top: {
+    ticker: string;
+    rank: number;
+    squeeze_score: number;
+    ignition_score: number;
+    news_ignition: number | null;
+    direction: Direction;
+    thesis_broken: boolean;
+    halt_code: string | null;
+  }[];
+  ts: string;
+}
+
+export interface SqueezeDocEvent {
+  type: "doc";
+  tickers: string[];
+  source: string;
+  source_type: string;
+  title: string;
+  published_at: string | null;
+  ts: string;
+}
+
+export type SqueezeStreamEvent = SqueezeRunEvent | SqueezeDocEvent;
+
+export const SQUEEZE_STREAM_URL = `${API_BASE}/api/squeeze/stream`;
 
 /** Most recent persisted squeeze ranking, or null. Public read (generated server-side). */
 export async function fetchLatestSqueeze(): Promise<SqueezeRanking | null> {
