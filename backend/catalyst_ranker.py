@@ -101,6 +101,18 @@ _CREDIBILITY: dict[str, float] = {
     "fda": 1.1, "businesswire": 1.03, "globe newswire": 1.0, "pr newswire": 1.0,
 }
 
+# Deep-read breadth: how many shortlist tickers, representative articles per
+# ticker, and description characters reach the LLM. Wider = more diverse
+# grading feedback per run at proportionally higher API cost. Env-tunable so
+# test runs can widen without a redeploy (credits are spent on news analysis
+# only). Read at call time.
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
 # Title-similarity threshold above which two articles are "the same story".
 _DUP_THRESHOLD = 0.72
 
@@ -266,11 +278,16 @@ def _credibility_for(source: str) -> float:
     return best
 
 
-def _representative_articles(clusters: list[list[dict[str, Any]]], cap: int = 6) -> list[dict[str, Any]]:
+def _representative_articles(
+    clusters: list[list[dict[str, Any]]], cap: Optional[int] = None
+) -> list[dict[str, Any]]:
     """
     Pick one representative per story cluster for the LLM, preferring
-    higher-materiality source types and longer descriptions, capped at ``cap``.
+    higher-materiality source types and longer descriptions, capped at ``cap``
+    (default: CATALYST_ARTICLE_CAP env var, else 8).
     """
+    if cap is None:
+        cap = _env_int("CATALYST_ARTICLE_CAP", 8)
     reps: list[dict[str, Any]] = []
     # Largest (most-syndicated) stories first — those are the loudest catalysts.
     for cluster in sorted(clusters, key=len, reverse=True):
@@ -286,7 +303,7 @@ def _representative_articles(clusters: list[list[dict[str, Any]]], cap: int = 6)
             "source": rep.get("source", ""),
             "source_type": rep.get("source_type", "rss"),
             "title": rep.get("title", ""),
-            "description": (rep.get("description") or "")[:500],
+            "description": (rep.get("description") or "")[:_env_int("CATALYST_ARTICLE_CHARS", 700)],
             "url": rep.get("url", ""),
             "published_at": _iso(rep.get("published_at")),
             "reprints": len(cluster),
@@ -455,10 +472,18 @@ def score_candidates(
     return qualified
 
 
+# Conviction floor for the aggregate direction call: mean sentiment within
+# (-0.15, 0.15) is routine-coverage territory (a lone dividend declaration or
+# mild wire recap), not a directional catalyst read. Item-level labels keep
+# their own thresholds in sentiment.py; this band only governs the per-ticker
+# direction the ranker reports.
+_DIRECTION_CONVICTION = 0.15
+
+
 def _direction_from_sentiment(score: float) -> str:
-    if score >= 0.05:
+    if score >= _DIRECTION_CONVICTION:
         return "bullish"
-    if score <= -0.05:
+    if score <= -_DIRECTION_CONVICTION:
         return "bearish"
     return "neutral"
 
@@ -744,7 +769,7 @@ async def rank_catalysts(
     collection: Any,
     *,
     now: Optional[datetime] = None,
-    top_k: int = 10,
+    top_k: Optional[int] = None,
     min_sources: int = 2,
     baseline_days: int = 14,
     use_llm: bool = True,
@@ -757,6 +782,9 @@ async def rank_catalysts(
 ) -> dict[str, Any]:
     """
     Run the full pipeline and return a ranking result dict (not yet persisted).
+
+    ``top_k`` defaults to the CATALYST_TOP_K env var (else 12): the number of
+    shortlist tickers offered to the LLM deep read.
 
     ``model`` forces a specific LLM for the deep read (else ``CATALYST_MODEL``);
     ``trigger`` records how the run was initiated ("manual" | "scheduled" |
@@ -798,6 +826,8 @@ async def rank_catalysts(
         candidates, min_sources=min_sources, weights=weights,
         market_caps=market_caps, premarket=premarket,
     )
+    if top_k is None:
+        top_k = _env_int("CATALYST_TOP_K", 12)
     shortlist = ranked[:top_k]
 
     llm_by_ticker: Optional[dict[str, Any]] = None

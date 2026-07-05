@@ -21,3 +21,6 @@ __pycache__/
 # Node
 node_modules/
 .next/
+
+# Test suites — local-only, not tracked on GitHub
+backend/tests/
