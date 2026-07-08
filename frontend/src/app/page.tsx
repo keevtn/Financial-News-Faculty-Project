@@ -53,6 +53,7 @@ export default function HomePage() {
   const [socialFilters, setSocialFilters] = useState<SocialFilterState>(DEFAULT_SOCIAL_FILTERS);
   const [activeTab, setActiveTab] = useState<TabId>("structured");
   const [alertCount, setAlertCount] = useState(0);
+  const [sidebarOpen, setSidebarOpen] = useState(false);  // mobile filter drawer
 
   // Lightweight alert-count fetch for the nav badge (the API is cached server-side).
   useEffect(() => {
@@ -316,7 +317,7 @@ export default function HomePage() {
 
   return (
     <ChartProvider>
-    <div className="flex flex-col h-screen overflow-hidden">
+    <div className="flex flex-col app-shell overflow-hidden">
       <a href="#main-content" className="skip-link">Skip to content</a>
       <Header itemCount={filtered.length} scoringPending={scoringPending} />
       <TickerTape symbols={allSymbols} pollIntervalMs={60_000} />
@@ -331,8 +332,25 @@ export default function HomePage() {
               onChange={setFilters}
               tickerCounts={tickerCounts}
               sourceCounts={sourceCounts}
+              open={sidebarOpen}
+              onClose={() => setSidebarOpen(false)}
             />
-            <NewsFeed items={filtered} scoringPending={scoringPending} />
+            <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+              {/* Mobile-only bar to open the filter drawer (sidebar is inline at md+). */}
+              <div className="md:hidden shrink-0 flex items-center gap-2 border-b border-[#1e2d4a] bg-[#0a0e1a] px-3 py-2">
+                <button
+                  onClick={() => setSidebarOpen(true)}
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-200 bg-[#0f1629] border border-[#1e2d4a] rounded px-3 py-1.5 active:bg-[#00d4aa]/10"
+                >
+                  <svg aria-hidden="true" viewBox="0 0 24 24" className="w-3.5 h-3.5 fill-current">
+                    <path d="M3 5h18l-7 8v6l-4-2v-4z" />
+                  </svg>
+                  Filters
+                </button>
+                <span className="text-[11px] text-slate-400">{filtered.length} articles</span>
+              </div>
+              <NewsFeed items={filtered} scoringPending={scoringPending} />
+            </div>
           </div>
         </>
       ) : activeTab === "unstructured" ? (

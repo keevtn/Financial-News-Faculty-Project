@@ -19,7 +19,7 @@ const TABS: { id: TabId; label: string; sub: string }[] = [
 
 export default function TabNav({ active, onChange, badges }: TabNavProps) {
   return (
-    <nav aria-label="Dashboard views" className="bg-[#0a0f1e] border-b border-[#1e2d4a] px-6 flex items-end gap-0 shrink-0 overflow-x-auto">
+    <nav aria-label="Dashboard views" className="bg-[#0a0f1e] border-b border-[#1e2d4a] px-3 sm:px-6 flex items-end gap-0 shrink-0 overflow-x-auto scrollbar-thin">
       {TABS.map((tab) => {
         const isActive = active === tab.id;
         const badge = badges?.[tab.id] ?? 0;
@@ -29,7 +29,7 @@ export default function TabNav({ active, onChange, badges }: TabNavProps) {
             onClick={() => onChange(tab.id)}
             aria-current={isActive ? "page" : undefined}
             className={[
-              "relative flex items-baseline gap-2 px-5 py-2.5 text-xs font-semibold tracking-wide transition-colors border-b-2 -mb-px whitespace-nowrap",
+              "relative flex items-baseline gap-2 px-3 sm:px-5 py-2.5 text-xs font-semibold tracking-wide transition-colors border-b-2 -mb-px whitespace-nowrap",
               isActive
                 ? "text-[#00d4aa] border-[#00d4aa]"
                 : "text-slate-400 border-transparent hover:text-slate-300",
@@ -44,7 +44,7 @@ export default function TabNav({ active, onChange, badges }: TabNavProps) {
                 {badge > 99 ? "99+" : badge}
               </span>
             )}
-            <span className="text-[10px] font-normal text-slate-400">
+            <span className="hidden md:inline text-[10px] font-normal text-slate-400">
               {tab.sub}
             </span>
           </button>

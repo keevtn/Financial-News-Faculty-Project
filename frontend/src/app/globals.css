@@ -5,6 +5,29 @@
 body {
   background-color: #0a0e1a;
   color: #e2e8f0;
+  /* Don't let iOS Safari inflate font sizes in landscape. */
+  -webkit-text-size-adjust: 100%;
+  /* Guard against any single wide child forcing a horizontal scroll on phones. */
+  overflow-x: hidden;
+}
+
+/* Full-height app shell. `100vh` is wrong on mobile browsers (it ignores the
+   address bar, so the bottom of the UI gets clipped); `100dvh` tracks the
+   actual visible viewport. The vh line is a fallback for older engines. */
+.app-shell {
+  height: 100vh;
+  height: 100dvh;
+}
+
+/* Comfortable touch targets on coarse pointers (phones/tablets) without
+   bloating the dense desktop layout. */
+@media (pointer: coarse) {
+  button,
+  a,
+  input[type="checkbox"],
+  input[type="radio"] {
+    touch-action: manipulation;
+  }
 }
 
 /* ticker tape marquee — duration set via --ticker-duration CSS var on the element */

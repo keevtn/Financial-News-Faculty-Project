@@ -192,8 +192,8 @@ export default function ScreenerView() {
         ) : rows.length === 0 ? (
           <p className="text-sm text-slate-400">No matches for this screen.</p>
         ) : (
-          <div className="max-w-5xl mx-auto border border-[#1e2d4a] rounded-lg overflow-hidden">
-            <table className="w-full text-xs">
+          <div className="max-w-5xl mx-auto border border-[#1e2d4a] rounded-lg overflow-x-auto scrollbar-thin">
+            <table className="w-full min-w-[520px] text-xs">
               <thead className="bg-[#0a0f1e] border-b border-[#1e2d4a]">
                 <tr>
                   <th scope="col" className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-slate-400 w-8">#</th>

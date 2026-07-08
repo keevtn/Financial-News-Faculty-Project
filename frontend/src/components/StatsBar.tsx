@@ -16,7 +16,7 @@ export default function StatsBar({ items }: StatsBarProps) {
   const neutPct = 100 - bullPct - bearPct;
 
   return (
-    <div className="bg-[#0f1629] border-b border-[#1e2d4a] px-6 py-2 flex items-center gap-5 text-xs shrink-0">
+    <div className="bg-[#0f1629] border-b border-[#1e2d4a] px-3 sm:px-6 py-2 flex flex-wrap items-center gap-x-4 sm:gap-x-5 gap-y-1 text-xs shrink-0">
       <span className="flex items-center gap-1.5 text-emerald-400">
         <span>▲</span>
         <span className="font-semibold uppercase tracking-wider">Bullish</span>

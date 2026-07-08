@@ -9,6 +9,9 @@ interface FilterSidebarProps {
   onChange: (f: FilterState) => void;
   tickerCounts: Map<string, number>;
   sourceCounts: Map<string, number>;
+  /** Mobile drawer open state. Ignored at md+ where the sidebar is always shown. */
+  open?: boolean;
+  onClose?: () => void;
 }
 
 const TOPIC_COLORS: Record<string, string> = {
@@ -171,6 +174,8 @@ export default function FilterSidebar({
   onChange,
   tickerCounts,
   sourceCounts,
+  open = false,
+  onClose,
 }: FilterSidebarProps) {
   const [pendingLimit, setPendingLimit] = useState(String(filters.limit ?? 100));
 
@@ -178,6 +183,14 @@ export default function FilterSidebar({
   useEffect(() => {
     setPendingLimit(String(filters.limit ?? 100));
   }, [filters.limit]);
+
+  // Close the mobile drawer on Escape.
+  useEffect(() => {
+    if (!open || !onClose) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
 
   const parsedLimit = parseInt(pendingLimit, 10);
   const limitWarning =
@@ -199,7 +212,40 @@ export default function FilterSidebar({
     }
   }
   return (
-    <aside aria-label="News filters" className="w-52 shrink-0 bg-[#0a0e1a] border-r border-[#1e2d4a] overflow-y-auto scrollbar-thin py-4 px-3">
+    <>
+      {/* Mobile backdrop — tap to dismiss the drawer. */}
+      {open && (
+        <div
+          onClick={onClose}
+          aria-hidden="true"
+          className="fixed inset-0 z-40 bg-black/60 md:hidden"
+        />
+      )}
+      <aside
+        aria-label="News filters"
+        className={[
+          // Mobile: off-canvas drawer that slides in from the left.
+          "fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] transform transition-transform duration-200 ease-out",
+          open ? "translate-x-0" : "-translate-x-full",
+          // md+: static in-flow column, always visible.
+          "md:static md:z-auto md:w-52 md:max-w-none md:translate-x-0 md:transition-none",
+          "shrink-0 bg-[#0a0e1a] border-r border-[#1e2d4a] overflow-y-auto scrollbar-thin py-4 px-3",
+        ].join(" ")}
+      >
+      {/* Drawer header (mobile only) */}
+      <div className="flex items-center justify-between mb-4 md:hidden">
+        <span className="text-xs font-semibold uppercase tracking-widest text-slate-300">
+          Filters
+        </span>
+        <button
+          onClick={onClose}
+          aria-label="Close filters"
+          className="text-slate-400 hover:text-[#00d4aa] text-xl leading-none px-2 -mr-1"
+        >
+          <span aria-hidden="true">×</span>
+        </button>
+      </div>
+
       {/* Search */}
       <div className="mb-5">
         <input
@@ -358,6 +404,7 @@ export default function FilterSidebar({
       >
         Reset all filters
       </button>
-    </aside>
+      </aside>
+    </>
   );
 }
